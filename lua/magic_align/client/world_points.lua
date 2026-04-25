@@ -11,18 +11,27 @@ local VectorP = M.VectorP
 local AngleP = M.AngleP
 local isvector = M.IsVectorLike
 local isWorldTarget = M.IsWorldTarget
-local colors = client.colors or {}
+local LocalToWorldPosPrecise = M.LocalToWorldPosPrecise
 local snapGizmoPosition = client.snapGizmoPosition
+local gizmoShared = client.gizmoShared or {}
 
 local WORLD_POINT_DRAG_DEADZONE = 1
 local WORLD_POINT_GIZMO_SPACE = "world_point"
 
-local function copyVec(value)
-    return M.CopyVectorPrecise(value)
-end
+local copyVec = M.CopyVectorPrecise
+local copyAng = M.CopyAnglePrecise
+local ZERO_VEC = VectorP(0, 0, 0)
+local ZERO_ANG = AngleP(0, 0, 0)
 
-local function copyAng(value)
-    return M.CopyAnglePrecise(value)
+local function setVec(out, value)
+    if not isvector(value) then return end
+
+    if not isvector(out) then
+        return VectorP(value.x, value.y, value.z)
+    end
+
+    out.x, out.y, out.z = value.x, value.y, value.z
+    return out
 end
 
 local function normalizedVec(value)
@@ -148,6 +157,10 @@ local function updateTargetPointFromCandidate(state, index, candidate)
 end
 
 local function gizmoSize(state)
+    if isfunction(gizmoShared.sizeForProp) then
+        return gizmoShared.sizeForProp(state and state.prop1)
+    end
+
     return math.Clamp(IsValid(state and state.prop1) and state.prop1:BoundingRadius() * 0.42 or 32, 18, 72)
 end
 
@@ -177,50 +190,23 @@ local function buildGizmo(state)
         and press.worldPoint == true
         and press.worldPointIndex == index
         and press.space == WORLD_POINT_GIZMO_SPACE then
-        origin = copyVec(press.origin)
+        local currentOrigin = isvector(press.currentGizmoPos)
+            and LocalToWorldPosPrecise(press.currentGizmoPos, press.origin, press.basis)
+            or press.origin
+        origin = copyVec(currentOrigin)
         basis = copyAng(press.basis)
         referenceBasis = copyAng(press.referenceBasis or basis)
     end
 
     local size = gizmoSize(state)
-    local planeOffset = size * 0.2
-    local pickRadius = math.max(324, size * size * 0.18)
-    local basisForward, basisRight, basisUp = M.AngleAxesPrecise(basis)
-    local x, y = ScrW() * 0.5, ScrH() * 0.5
-
-    local function originOffset(axis, distance)
-        return M.AddVectorsPrecise(origin, M.ScaleVectorPrecise(axis, distance))
+    local handles, metrics
+    if isfunction(gizmoShared.linearHandles) then
+        handles, _, _, _, metrics = gizmoShared.linearHandles(origin, basis, size)
     end
 
-    local handles = {
-        { kind = "move", key = "x", color = colors.x, a = origin, b = originOffset(basisForward, size) },
-        { kind = "move", key = "y", color = colors.y, a = origin, b = originOffset(basisRight, size) },
-        { kind = "move", key = "z", color = colors.z, a = origin, b = originOffset(basisUp, size) },
-        { kind = "plane", key = "xy", color = colors.xy, center = M.AddVectorsPrecise(originOffset(basisForward, planeOffset), M.ScaleVectorPrecise(basisRight, planeOffset)) },
-        { kind = "plane", key = "xz", color = colors.xz, center = M.AddVectorsPrecise(originOffset(basisForward, planeOffset), M.ScaleVectorPrecise(basisUp, planeOffset)) },
-        { kind = "plane", key = "yz", color = colors.yz, center = M.AddVectorsPrecise(originOffset(basisRight, planeOffset), M.ScaleVectorPrecise(basisUp, planeOffset)) }
-    }
-
-    local best, bestDist
-    local function take(item, dist)
-        if dist and dist < pickRadius and (not bestDist or dist < bestDist) then
-            best = item
-            bestDist = dist
-        end
-    end
-
-    for i = 1, 3 do
-        local screen = handles[i].b:ToScreen()
-        if screen.visible then
-            take(handles[i], (x - screen.x) ^ 2 + (y - screen.y) ^ 2)
-        end
-    end
-
-    for i = 4, 6 do
-        local screen = handles[i].center:ToScreen()
-        if screen.visible then
-            take(handles[i], (x - screen.x) ^ 2 + (y - screen.y) ^ 2)
-        end
+    local best
+    if handles and metrics and isfunction(gizmoShared.pickHoveredHandle) then
+        best = gizmoShared.pickHoveredHandle(handles, metrics.pickRadius, metrics.ringRadius, metrics.ringPadding, origin, basis)
     end
 
     return {
@@ -228,9 +214,9 @@ local function buildGizmo(state)
         basis = basis,
         referenceBasis = referenceBasis,
         size = size,
-        planeOffset = planeOffset,
-        ringRadius = size * 0.82,
-        ringPadding = 0.5,
+        planeOffset = metrics and metrics.planeOffset or size * 0.2,
+        ringRadius = metrics and metrics.ringRadius or size * 0.82,
+        ringPadding = metrics and metrics.ringPadding or 0.5,
         hover = press
             and press.kind == "gizmo"
             and press.worldPoint == true
@@ -287,28 +273,13 @@ local function beginWorldPointGizmoDrag(state, handle)
     local origin = copyVec(handle.origin)
     local basis = copyAng(handle.basis or worldBasis())
     local item = handle.hover
-    local normal
-    local basisForward, basisRight, basisUp = M.AngleAxesPrecise(basis)
-
-    if item.kind == "move" then
-        local axis = item.key == "x" and basisForward or item.key == "y" and basisRight or basisUp
-        local toEye = normalizedVec(M.SubtractVectorsPrecise(eye, origin))
-        normal = toEye and M.CrossVectorsPrecise(M.CrossVectorsPrecise(axis, toEye), axis) or nil
-        if not normal or M.VectorLengthSqrPrecise(normal) < M.PICKING_VECTOR_EPSILON_SQR then
-            normal = M.CrossVectorsPrecise(M.CrossVectorsPrecise(axis, VectorP(0, 0, 1)), axis)
-        end
-    elseif item.kind == "plane" then
-        local a = item.key == "xy" and basisForward or item.key == "xz" and basisForward or basisRight
-        local b = item.key == "xy" and basisRight or item.key == "xz" and basisUp or basisUp
-        normal = M.CrossVectorsPrecise(a, b)
-        if M.DotVectorsPrecise(normal, M.SubtractVectorsPrecise(eye, origin)) < 0 then
-            normal = -normal
-        end
-    else
+    if item.kind ~= "move" and item.kind ~= "plane" then
         return false
     end
 
-    normal = normalizedVec(normal)
+    local normal = isfunction(gizmoShared.linearDragNormal)
+        and gizmoShared.linearDragNormal(origin, basis, item, eye)
+        or nil
     if not normal then return false end
 
     local worldPos, localPos = M.LinePlaneIntersection(dir, eye, normal, origin, basis)
@@ -355,31 +326,11 @@ local function updateWorldPointGizmoDrag(state)
     local _, localPos = M.LinePlaneIntersection(dir, eye, press.normal, press.origin, press.basis)
     if not isvector(localPos) then return true end
 
-    local dragStartLocal = press.dragStartLocal or press.startLocal or VectorP(0, 0, 0)
-    local currentGizmoPos = VectorP(dragStartLocal.x, dragStartLocal.y, dragStartLocal.z)
-
-    if press.gizmo.kind == "move" then
-        if press.gizmo.key == "x" then
-            currentGizmoPos.x = localPos.x
-        elseif press.gizmo.key == "y" then
-            currentGizmoPos.y = localPos.y
-        else
-            currentGizmoPos.z = localPos.z
-        end
-    elseif press.gizmo.kind == "plane" then
-        local first = press.gizmo.key:sub(1, 1)
-        local second = press.gizmo.key:sub(2, 2)
-
-        if first == "x" or second == "x" then
-            currentGizmoPos.x = localPos.x
-        end
-        if first == "y" or second == "y" then
-            currentGizmoPos.y = localPos.y
-        end
-        if first == "z" or second == "z" then
-            currentGizmoPos.z = localPos.z
-        end
-    else
+    local dragStartLocal = press.dragStartLocal or press.startLocal or ZERO_VEC
+    local currentGizmoPos = isfunction(gizmoShared.translationLocalPos)
+        and gizmoShared.translationLocalPos(press.gizmo, dragStartLocal, localPos, press.currentGizmoPos)
+        or nil
+    if not isvector(currentGizmoPos) then
         return true
     end
 
@@ -387,11 +338,11 @@ local function updateWorldPointGizmoDrag(state)
         currentGizmoPos = snapGizmoPosition(state, press, currentGizmoPos) or currentGizmoPos
     end
 
-    press.currentGizmoPos = copyVec(currentGizmoPos)
-    press.referenceDelta = currentGizmoPos - dragStartLocal
+    press.currentGizmoPos = setVec(press.currentGizmoPos, currentGizmoPos)
+    press.referenceDelta = setVec(press.referenceDelta, currentGizmoPos - dragStartLocal)
     press.rotationDelta = 0
 
-    local worldPos = LocalToWorldPrecise(currentGizmoPos, AngleP(0, 0, 0), press.origin, press.basis)
+    local worldPos = LocalToWorldPosPrecise(currentGizmoPos, press.origin, press.basis)
     if isvector(worldPos) then
         updateTargetPoint(state, press.worldPointIndex, worldPos, traceSnapNormal(press))
     end
@@ -532,7 +483,7 @@ function worldPoints.beginMousePress(_, state)
     end
 
     if hover.side == "target" and hover.point and isWorldTarget(hover.ent) then
-        return true
+        return beginWorldPointPress(state, hover)
     end
 
     return false

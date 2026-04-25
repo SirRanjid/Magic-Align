@@ -150,6 +150,9 @@ local persistedMenuConVars = {
     "magic_align_translation_snap",
     "magic_align_trace_snap_length",
     "magic_align_world_target",
+    "magic_align_grid_label_percent",
+    "magic_align_grid_label_reduce_fraction",
+    "magic_align_grid_alpha",
     "magic_align_display_rounding",
     "magic_align_preview_occluded",
     "magic_align_preview_occluded_r",
@@ -1138,6 +1141,52 @@ local function addStyledCheckBox(panel, label, convar)
     return checkBox
 end
 
+local function createInlineCheckBoxRow(parent, items, options)
+    options = options or {}
+
+    local row = vgui.Create("DPanel", parent)
+    row.Paint = nil
+    row.items = {}
+    row.gap = options.gap or 12
+    row.itemTall = options.itemTall or 22
+
+    for i = 1, #(items or {}) do
+        local item = items[i] or {}
+        local checkBox = vgui.Create("DCheckBoxLabel", row)
+        checkBox:SetText(item.label or "")
+        if item.convar then
+            checkBox:SetConVar(item.convar)
+        end
+        checkBox:SizeToContents()
+        checkBox:SetTall(row.itemTall)
+        styleCheckBox(checkBox)
+        row.items[#row.items + 1] = checkBox
+    end
+
+    row.PerformLayout = function(self, w, _)
+        local x = 0
+        local tallest = self.itemTall
+
+        for i = 1, #self.items do
+            local checkBox = self.items[i]
+            if IsValid(checkBox) then
+                checkBox:SizeToContents()
+                checkBox:SetTall(self.itemTall)
+                checkBox:SetPos(x, 0)
+                checkBox:SetWide(math.min(checkBox:GetWide(), math.max(w - x, 0)))
+                checkBox:InvalidateLayout(true)
+
+                x = x + checkBox:GetWide() + self.gap
+                tallest = math.max(tallest, checkBox:GetTall())
+            end
+        end
+
+        self:SetTall(tallest)
+    end
+
+    return row
+end
+
 local function readColorConVar(name, fallback)
     local cvar = GetConVar(name)
     local value = cvar and cvar:GetInt() or fallback
@@ -2032,6 +2081,11 @@ function TOOL.BuildCPanel(panel)
     addStyledSlider(gridCategoryContent, "Grid B Std", "magic_align_grid_b", 2, 24, 0, { labelWide = 72, textWide = 56, tall = 30 })
     addStyledSlider(gridCategoryContent, "Grid B Min", "magic_align_grid_b_min", 2, 24, 0, { labelWide = 72, textWide = 56, tall = 30 })
     addStyledSlider(gridCategoryContent, "Min Len", "magic_align_min_length", 0, 12, 0, { labelWide = 72, textWide = 56, tall = 30 })
+    addStyledSlider(gridCategoryContent, "Grid Alpha", "magic_align_grid_alpha", 0, 255, 0, { labelWide = 72, textWide = 56, tall = 30 })
+    gridCategoryContent:AddItem(createInlineCheckBoxRow(gridCategoryContent, {
+        { label = "Grid Labels as Percent", convar = "magic_align_grid_label_percent" },
+        { label = "Reduce Fractions", convar = "magic_align_grid_label_reduce_fraction" }
+    }))
     createPersistedCategory(panel, "grid_settings", "Grid A/B", gridCategoryContent)
 
     local constraintsCategoryContent = createStackPanel(panel, {
@@ -2178,7 +2232,6 @@ function TOOL.BuildCPanel(panel)
         updateDisplayRoundingUi(currentDisplayRoundingSetting())
     end
 
-    addStyledCheckBox(miscCategoryContent, "Grid Labels as Percent", "magic_align_grid_label_percent")
     addStyledCheckBox(miscCategoryContent, "Allow World as Target", "magic_align_world_target")
     addStyledCheckBox(miscCategoryContent, "Disable SmartSnap While Active", "magic_align_disable_smartsnap_active")
     addStyledCheckBox(miscCategoryContent, "Highlight Magic Align in Context Menu", "magic_align_highlight_context_menu")

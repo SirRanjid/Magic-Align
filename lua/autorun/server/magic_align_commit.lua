@@ -21,6 +21,7 @@ local PENDING_COMMITS = setmetatable({}, { __mode = "k" })
 local COMMIT_QUEUE = {}
 local COMMIT_UPLOAD_TIMEOUT = 8
 local runCommit
+local modelScale = M.GetEntityModelScale
 
 local function cloneVec(v)
     if not isvector(v) then return end
@@ -32,73 +33,21 @@ local function cloneAng(a)
     return AngleP(a.p, a.y, a.r)
 end
 
-local function modelScale(ent)
-    return math.max(tonumber(IsValid(ent) and ent:GetModelScale() or 1) or 1, M.MODEL_SCALE_EPSILON)
-end
-
 local SCALE_IDENTITY = VectorP(1, 1, 1)
-local SCALE_ZERO = VectorP(0, 0, 0)
-
-local function vectorApprox(a, b, eps)
-    if not isvector(a) or not isvector(b) then return false end
-
-    eps = eps or M.UI_COMPARE_EPSILON
-
-    return math.abs(a.x - b.x) <= eps
-        and math.abs(a.y - b.y) <= eps
-        and math.abs(a.z - b.z) <= eps
-end
-
-local function parseScaleVector(value)
-    local vec = value
-
-    if isstring(value) then
-        if value == "" then return end
-        vec = VectorP(value)
-    end
-
-    if not isvector(vec) then return end
-
-    return VectorP(vec.x, vec.y, vec.z)
-end
-
-local function findSizeHandler(ent)
-    if not IsValid(ent) or not isfunction(ent.GetChildren) then return end
-
-    local children = ent:GetChildren()
-    for i = 1, #children do
-        local child = children[i]
-        if IsValid(child) and child:GetClass() == "sizehandler" then
-            return child
-        end
-    end
-end
 
 local function advResizerData(ent)
-    if not IsValid(ent) then return end
-
-    local entityMods = ent.EntityMods
+    local entityMods = IsValid(ent) and ent.EntityMods or nil
     local modifierData = istable(entityMods) and entityMods.advr or nil
     if istable(modifierData) then
         return table.Copy(modifierData)
     end
 
-    -- Fallback for already-resized props whose duplicator modifier table is gone.
-    local handler = findSizeHandler(ent)
-    if not IsValid(handler) then return end
-
-    local physical = isfunction(handler.GetActualPhysicsScale) and parseScaleVector(handler:GetActualPhysicsScale()) or nil
-    local visual = isfunction(handler.GetVisualScale) and parseScaleVector(handler:GetVisualScale()) or nil
-
-    if not isvector(physical) or vectorApprox(physical, SCALE_ZERO) then
-        physical = VectorP(1, 1, 1)
+    local physical, visual = M.GetAdvResizerScales(ent)
+    if not isvector(physical) or not isvector(visual) then
+        return
     end
 
-    if not isvector(visual) or vectorApprox(visual, SCALE_ZERO) then
-        visual = VectorP(1, 1, 1)
-    end
-
-    if vectorApprox(physical, SCALE_IDENTITY) and vectorApprox(visual, SCALE_IDENTITY) then
+    if M.VectorApprox(physical, SCALE_IDENTITY) and M.VectorApprox(visual, SCALE_IDENTITY) then
         return
     end
 
@@ -241,6 +190,12 @@ local function registerClonedEntity(ply, ent, src)
     end
 end
 
+local function countClonedProp(ply, ent)
+    if not IsValid(ply) or not IsValid(ent) or not ply.AddCount then return end
+
+    ply:AddCount("props", ent)
+end
+
 local function applyDuplicatorData(ply, src, ent, data)
     if not IsValid(ent) or not istable(data) then return end
 
@@ -347,10 +302,6 @@ local function cloneViaSpawnFallback(ply, src, pos, ang)
     applyAdvResizerData(ply, src, ent)
     copyPhysicsState(src, ent)
 
-    if ply.AddCount then
-        ply:AddCount("props", ent)
-    end
-
     registerClonedEntity(ply, ent, src)
 
     return ent
@@ -446,17 +397,22 @@ local function cloneEntity(ply, src, pos, ang)
     -- their own registered duplicate/restore logic without relying on AdvDupe.
     local ent = cloneViaDuplicator(ply, src, pos, ang)
     if IsValid(ent) then
+        countClonedProp(ply, ent)
         return ent
     end
 
     if M.Compat and isfunction(M.Compat.CloneEntity) then
         local handled, compatEnt = M.Compat.CloneEntity(ply, src, pos, ang)
         if handled then
+            countClonedProp(ply, compatEnt)
             return compatEnt
         end
     end
 
-    return cloneViaSpawnFallback(ply, src, pos, ang)
+    ent = cloneViaSpawnFallback(ply, src, pos, ang)
+    countClonedProp(ply, ent)
+
+    return ent
 end
 
 local function settlePhysics(ent)

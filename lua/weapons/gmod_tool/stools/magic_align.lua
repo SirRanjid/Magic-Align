@@ -6,36 +6,71 @@ TOOL.ConfigName = ""
 MAGIC_ALIGN = MAGIC_ALIGN or include("autorun/magic_align.lua")
 
 local M = MAGIC_ALIGN
+local client = M.Client or {}
+M.Client = client
+local geometry = client.geometry or {}
+client.geometry = geometry
 local VectorP = M.VectorP
 local AngleP = M.AngleP
 local isvector = M.IsVectorLike
 local isangle = M.IsAngleLike
 local toVector = M.ToVector
 local toAngle = M.ToAngle
-local isWorldTarget
-local hasTargetEntity
-local traceHitsWorld
-local traceMatchesEntity
-local worldPosFromLocalPoint
-local localPointFromWorldPos
-local localNormalFromWorld
-local worldNormalFromLocal
-local pointFromCandidate
-local traceCandidate
+local compatGhosts = {}
 
-local function clearCompatGhost(state, ent)
+geometry.isWorldTarget = geometry.isWorldTarget or function()
+    return false
+end
+
+geometry.hasTargetEntity = geometry.hasTargetEntity or function(ent)
+    return geometry.isWorldTarget(ent) or IsValid(ent)
+end
+
+geometry.traceHitsWorld = geometry.traceHitsWorld or function()
+    return false
+end
+
+geometry.traceMatchesEntity = geometry.traceMatchesEntity or function()
+    return false
+end
+
+geometry.worldPosFromLocalPoint = geometry.worldPosFromLocalPoint or function()
+    return nil
+end
+
+geometry.localPointFromWorldPos = geometry.localPointFromWorldPos or function()
+    return nil
+end
+
+geometry.localNormalFromWorld = geometry.localNormalFromWorld or function()
+    return nil
+end
+
+geometry.worldNormalFromLocal = geometry.worldNormalFromLocal or function()
+    return nil
+end
+
+geometry.pointFromCandidate = geometry.pointFromCandidate or function()
+    return nil
+end
+
+geometry.traceCandidate = geometry.traceCandidate or function()
+    return nil
+end
+
+function compatGhosts.clear(state, ent)
     if M.Compat and isfunction(M.Compat.ClearGhost) then
         M.Compat.ClearGhost(state, ent)
     end
 end
 
-local function clearAllCompatGhosts(state)
+function compatGhosts.clearAll(state)
     if M.Compat and isfunction(M.Compat.ClearGhosts) then
         M.Compat.ClearGhosts(state)
     end
 end
 
-local function setCompatGhost(state, ent, pos, ang, alphaFn, linked)
+function compatGhosts.set(state, ent, pos, ang, alphaFn, linked)
     if M.Compat and isfunction(M.Compat.SetGhost) then
         return M.Compat.SetGhost(state, ent, pos, ang, alphaFn, linked)
     end
@@ -43,30 +78,100 @@ local function setCompatGhost(state, ent, pos, ang, alphaFn, linked)
     return false
 end
 
-local function worldPointsApi()
-    return M.Client and M.Client.WorldPoints or nil
-end
-
 -- Die Tabs spiegeln die Referenzen aus dem Shared-Code wider.
 -- Jeder Tab arbeitet mit seinem eigenen Referenzraum und zeigt denselben
 -- Raum anschliessend als Gizmo im Weltspace an.
-local SPACE_LABELS = {
-    prop1 = "Prop 1",
-    prop2 = "Prop 2",
-    points = "Axis",
-    world = "World"
+local TOOL_UI = {
+    spaceLabels = {
+        prop1 = "Prop 1",
+        prop2 = "Prop 2",
+        points = "Axis",
+        world = "World"
+    },
+    defaultDescription = "Easily align props.",
+    statusDescriptions = {
+        source_prop = "Pick the source prop by placing a point on it.",
+        source_points = "Place points on Prop 1.",
+        target_prop = "Add Points, Link Props",
+        target_points = "Place points on Prop 2.",
+        ready = "Refine positioning, then commit it."
+    },
+    information = {
+        idle = {
+            { name = "left" },
+            { name = "right" },
+            { name = "reload", icon = "magic_align/keys/R.png" },
+            { name = "tab", icon = "magic_align/keys/TAB.png", },
+            { name = "alt_pick", icon = "magic_align/keys/ALT.png" },
+            { name = "supress_snap", icon = "magic_align/keys/SHFT.png", icon2 = "magic_align/keys/EMP.png" }
+        },
+        ready = {
+            { name = "left" },
+            { name = "right" },
+            { name = "reload", icon = "magic_align/keys/R.png" },
+            { name = "use", icon = "magic_align/keys/E.png" },
+            { name = "tab", icon = "magic_align/keys/TAB.png" },
+            { name = "alt_pick", icon = "magic_align/keys/ALT.png" },
+            { name = "supress_snap", icon = "magic_align/keys/SHFT.png", icon2 = "magic_align/keys/EMP.png" }
+        }
+    }
 }
-local RING_QUALITY_PRESETS = {
-    { label = "Low", ringRtSize = 512, circleRtSize = 64, ringSegments = 64, circleSegments = 64, tickCount = 9 },
-    { label = "Medium", ringRtSize = 1024, circleRtSize = 128, ringSegments = 128, circleSegments = 128, tickCount = 17 },
-    { label = "High", ringRtSize = 2048, circleRtSize = 512, ringSegments = 256, circleSegments = 256, tickCount = 33 },
-    { label = "Ultra", ringRtSize = 4096, circleRtSize = 1024, ringSegments = 360, circleSegments = 360, tickCount = 65 },
-    { label = "Low", realtime = true, ringSegments = 12, circleSegments = 6, tickCount = 9 },
-    { label = "Medium", realtime = true, ringSegments = 24, circleSegments = 12, tickCount = 17 },
-    { label = "High", realtime = true, ringSegments = 36, circleSegments = 18, tickCount = 33 },
-    { label = "Ultra", realtime = true, ringSegments = 64, circleSegments = 32, tickCount = 65 }
+TOOL_UI.information.worldPoint = { name = "world_point_gizmo", icon = "magic_align/keys/ALT.png" }
+TOOL_UI.information.idleWorldPoint = {
+    TOOL_UI.information.idle[1],
+    TOOL_UI.information.idle[2],
+    TOOL_UI.information.idle[3],
+    TOOL_UI.information.idle[4],
+    TOOL_UI.information.worldPoint,
+    TOOL_UI.information.idle[6]
 }
-local DEFAULT_RING_QUALITY_INDEX = 2
+TOOL_UI.information.readyWorldPoint = {
+    TOOL_UI.information.ready[1],
+    TOOL_UI.information.ready[2],
+    TOOL_UI.information.ready[3],
+    TOOL_UI.information.ready[4],
+    TOOL_UI.information.ready[5],
+    TOOL_UI.information.worldPoint,
+    TOOL_UI.information.ready[7]
+}
+
+local RENDER_QUALITY = {
+    presets = {
+        { label = "Low", ringRtSize = 512, ringSegments = 64, tickCount = 9, hidePointTriangles = true },
+        { label = "Medium", ringRtSize = 1024, ringSegments = 128, tickCount = 17 },
+        { label = "High", ringRtSize = 2048, ringSegments = 256, tickCount = 33 },
+        { label = "Ultra", ringRtSize = 4096, ringSegments = 360, tickCount = 65 },
+        { label = "Low", realtime = true, ringSegments = 12, tickCount = 9, hidePointTriangles = true },
+        { label = "Medium", realtime = true, ringSegments = 24, tickCount = 17 },
+        { label = "High", realtime = true, ringSegments = 36, tickCount = 33 },
+        { label = "Ultra", realtime = true, ringSegments = 64, tickCount = 65 }
+    },
+    defaultIndex = 2
+}
+
+local PICK_CONFIG = {
+    pointRemoveRadius = 12,
+    cornerTraceMinLength = 6,
+    drawSelectDeadzone = 1,
+    faceTraceOutsideOffset = 1,
+    faceTraceEndOvershoot = 1,
+    traceProbeNormalDotMin = 0.999999
+}
+
+local ROTATION_CONFIG = {
+    snapDivisors = { 3, 4, 5, 6, 8, 9, 10, 12, 15, 18, 20, 24, 30, 36, 40, 45, 60, 72, 90, 120, 180, 360 },
+    defaultSnapIndex = 12,
+    maxVisibleTicks = 20
+}
+
+local SESSION_CONFIG = {
+    convarSuffixes = { "px", "py", "pz", "pitch", "yaw", "roll" }
+}
+
+local SMARTSNAP_CONFIG = {
+    enabledCvar = "snap_enabled",
+    disableCvar = "magic_align_disable_smartsnap_active"
+}
 
 TOOL.ClientConVar = {
     grid_a = "12",
@@ -83,7 +188,7 @@ TOOL.ClientConVar = {
     preview_occluded_g = "52",
     preview_occluded_b = "70",
     preview_occluded_a = "160",
-    ring_quality = tostring(DEFAULT_RING_QUALITY_INDEX),
+    ring_quality = tostring(RENDER_QUALITY.defaultIndex),
     rotation_snap = "12",
     translation_snap = "0",
     world_target = "1",
@@ -115,64 +220,7 @@ for _, space in ipairs(M.SPACES) do
     TOOL.ClientConVar[space .. "_roll"] = "0"
 end
 
-local POINT_REMOVE_RADIUS = 12
-local CORNER_TRACE_MIN_LENGTH = 6
-local DRAW_SELECT_DEADZONE = 1
-local FACE_TRACE_OUTSIDE_OFFSET = 1
-local FACE_TRACE_END_OVERSHOOT = 1
-local PRIMITIVE_AABB_FACE_EPSILON = 0.75
-local TRACE_PROBE_NORMAL_DOT_MIN = 0.999999
-local ROTATION_SNAP_DIVISORS = { 3, 4, 5, 6, 8, 9, 10, 12, 15, 18, 20, 24, 30, 36, 40, 45, 60, 72, 90, 120, 180, 360 }
-local DEFAULT_ROTATION_SNAP_INDEX = 12
-local MAX_VISIBLE_ROTATION_TICKS = 20
-local SESSION_CONVAR_SUFFIXES = { "px", "py", "pz", "pitch", "yaw", "roll" }
-local SMARTSNAP_ENABLED_CVAR = "snap_enabled"
-local SMARTSNAP_DISABLE_CVAR = "magic_align_disable_smartsnap_active"
-local TOOL_DEFAULT_DESCRIPTION = "Easily align props."
-local TOOL_STATUS_DESCRIPTIONS = {
-    source_prop = "Pick the source prop by placing a point on it.",
-    source_points = "Place points on Prop 1.",
-    target_prop = "Add Points, Link Props",
-    target_points = "Place points on Prop 2.",
-    ready = "Refine positioning, then commit it."
-}
-local TOOL_INFORMATION_IDLE = {
-    { name = "left" },
-    { name = "right" },
-    { name = "reload", icon = "magic_align/keys/R.png" },
-    { name = "tab", icon = "magic_align/keys/TAB.png", },
-    { name = "alt_pick", icon = "magic_align/keys/ALT.png" },
-    { name = "supress_snap", icon = "magic_align/keys/SHFT.png", icon2 = "magic_align/keys/EMP.png" }
-}
-local TOOL_INFORMATION_READY = {
-    { name = "left" },
-    { name = "right" },
-    { name = "reload", icon = "magic_align/keys/R.png" },
-    { name = "use", icon = "magic_align/keys/E.png" },
-    { name = "tab", icon = "magic_align/keys/TAB.png" },
-    { name = "alt_pick", icon = "magic_align/keys/ALT.png" },
-    { name = "supress_snap", icon = "magic_align/keys/SHFT.png", icon2 = "magic_align/keys/EMP.png" }
-}
-local TOOL_INFORMATION_WORLD_POINT = { name = "world_point_gizmo", icon = "magic_align/keys/ALT.png" }
-local TOOL_INFORMATION_IDLE_WORLD_POINT = {
-    TOOL_INFORMATION_IDLE[1],
-    TOOL_INFORMATION_IDLE[2],
-    TOOL_INFORMATION_IDLE[3],
-    TOOL_INFORMATION_IDLE[4],
-    TOOL_INFORMATION_WORLD_POINT,
-    TOOL_INFORMATION_IDLE[6]
-}
-local TOOL_INFORMATION_READY_WORLD_POINT = {
-    TOOL_INFORMATION_READY[1],
-    TOOL_INFORMATION_READY[2],
-    TOOL_INFORMATION_READY[3],
-    TOOL_INFORMATION_READY[4],
-    TOOL_INFORMATION_READY[5],
-    TOOL_INFORMATION_WORLD_POINT,
-    TOOL_INFORMATION_READY[7]
-}
-
-TOOL.Information = TOOL_INFORMATION_IDLE
+TOOL.Information = TOOL_UI.information.idle
 
 if CLIENT then
     CreateClientConVar(
@@ -186,7 +234,27 @@ if CLIENT then
     )
 
     CreateClientConVar(
-        SMARTSNAP_DISABLE_CVAR,
+        "magic_align_grid_label_reduce_fraction",
+        "1",
+        true,
+        false,
+        "Show Magic Align fraction labels in reduced form instead of the original grid fraction.",
+        0,
+        1
+    )
+
+    CreateClientConVar(
+        "magic_align_grid_alpha",
+        "64",
+        true,
+        false,
+        "Set the alpha used for Magic Align Grid A and Grid B preview lines.",
+        0,
+        255
+    )
+
+    CreateClientConVar(
+        SMARTSNAP_CONFIG.disableCvar,
         "1",
         true,
         false,
@@ -206,13 +274,13 @@ if CLIENT then
     )
 
     language.Add("tool.magic_align.name", "Magic Align")
-    language.Add("tool.magic_align.desc", TOOL_DEFAULT_DESCRIPTION)
+    language.Add("tool.magic_align.desc", TOOL_UI.defaultDescription)
     language.Add("tool.magic_align.left", "Place & Move Points | Manipulate Gizmo")
     language.Add("tool.magic_align.right", "Delete Points | Toggle Linked Props")
     language.Add("tool.magic_align.reload", "Reset Session")
     language.Add("tool.magic_align.use", "Commit | Shift: Keep Session | Ctrl: Copy | Ctrl+Shift: Copy&Move")
     language.Add("tool.magic_align.tab", "Cycles Reference Spaces")
-    language.Add("tool.magic_align.world_point_gizmo", "Toggle Gizmoon hovered World-Point")
+    language.Add("tool.magic_align.world_point_gizmo", "Toggle Gizmo on hovered World-Point")
     language.Add("tool.magic_align.alt_pick", "Surface-Select")
     language.Add("tool.magic_align.supress_snap", "Suppress Snapping")
 end
@@ -247,11 +315,11 @@ local function editable(state, ent, tr)
         end
     end
 
-    if isWorldTarget(state.prop2) and traceHitsWorld(tr) then
+    if geometry.isWorldTarget(state.prop2) and geometry.traceHitsWorld(tr) then
         return "target", state.prop2, state.target
     end
 
-    if hasTargetEntity(state.prop2) then
+    if geometry.hasTargetEntity(state.prop2) then
         return "target", state.prop2, state.target
     end
 
@@ -290,7 +358,7 @@ local function performClientRightClick(trace)
                 ghost:Remove()
             end
             state.linkedGhosts[trace.Entity] = nil
-            clearCompatGhost(state, trace.Entity)
+            compatGhosts.clear(state, trace.Entity)
         elseif #linked < M.GetMaxLinkedProps() then
             linked[#linked + 1] = trace.Entity
         end
@@ -299,11 +367,11 @@ local function performClientRightClick(trace)
     end
 
     local _, ent, points = editable(state, trace and trace.Entity or nil, trace)
-    if not trace or not ent or not traceMatchesEntity(trace, ent) or not isvector(trace.HitPos) then return true end
+    if not trace or not ent or not geometry.traceMatchesEntity(trace, ent) or not isvector(trace.HitPos) then return true end
 
     local best, bestDist
     for i = 1, #points do
-        local world = worldPosFromLocalPoint(ent, points[i])
+        local world = geometry.worldPosFromLocalPoint(ent, points[i])
         if isvector(world) then
             local dist = world:DistToSqr(trace.HitPos)
             if not bestDist or dist < bestDist then
@@ -313,13 +381,13 @@ local function performClientRightClick(trace)
         end
     end
 
-    if best and bestDist <= POINT_REMOVE_RADIUS ^ 2 then
+    if best and bestDist <= PICK_CONFIG.pointRemoveRadius ^ 2 then
         table.remove(points, best)
 
-        local worldPoints = worldPointsApi()
+        local worldPoints = client.WorldPoints
         if worldPoints
             and points == state.target
-            and isWorldTarget(state.prop2)
+            and geometry.isWorldTarget(state.prop2)
             and isfunction(worldPoints.onTargetPointRemoved) then
             worldPoints.onTargetPointRemoved(state, best)
         end
@@ -333,7 +401,7 @@ end
 
 local function resetSessionConVars()
     for _, space in ipairs(M.SPACES) do
-        for _, suffix in ipairs(SESSION_CONVAR_SUFFIXES) do
+        for _, suffix in ipairs(SESSION_CONFIG.convarSuffixes) do
             RunConsoleCommand("magic_align_" .. space .. "_" .. suffix, "0")
         end
     end
@@ -356,7 +424,7 @@ local function performClientReload(tool)
         end
     end
     if state then
-        clearAllCompatGhosts(state)
+        compatGhosts.clearAll(state)
     end
 
     resetSessionConVars()
@@ -386,7 +454,7 @@ local function validateClientState(tool, state)
         return false
     end
 
-    if state.prop2 ~= nil and not isWorldTarget(state.prop2) and (not IsValid(state.prop2) or not M.IsProp(state.prop2)) then
+    if state.prop2 ~= nil and not geometry.isWorldTarget(state.prop2) and (not IsValid(state.prop2) or not M.IsProp(state.prop2)) then
         resetClientSession(tool)
         return false
     end
@@ -450,6 +518,7 @@ if SERVER then
 
     AddCSLuaFile("magic_align/client/math_parser.lua")
     AddCSLuaFile("magic_align/client/formula_manager.lua")
+    AddCSLuaFile("magic_align/client/geometry.lua")
     AddCSLuaFile("magic_align/client/dmagic_align_numslider.lua")
     AddCSLuaFile("magic_align/client/menu.lua")
     AddCSLuaFile("magic_align/client/menuentryhack.lua")
@@ -507,155 +576,37 @@ local function comp(v, key)
     return key == "x" and v.x or key == "y" and v.y or v.z
 end
 
-local function copyVec(v)
-    return M.CopyVectorPrecise(v)
+local copyVec = M.CopyVectorPrecise
+local copyAng = M.CopyAnglePrecise
+local ZERO_VEC = VectorP(0, 0, 0)
+local ZERO_ANG = AngleP(0, 0, 0)
+local LocalToWorldPosPrecise = M.LocalToWorldPosPrecise
+local WorldToLocalPosPrecise = M.WorldToLocalPosPrecise
+
+local function setVec(out, value)
+    if not isvector(value) then return end
+
+    if not isvector(out) then
+        return VectorP(value.x, value.y, value.z)
+    end
+
+    out.x, out.y, out.z = value.x, value.y, value.z
+    return out
 end
 
-local function copyAng(a)
-    return M.CopyAnglePrecise(a)
+local function setAng(out, value)
+    if not isangle(value) then return end
+
+    if not isangle(out) then
+        return AngleP(value.p, value.y, value.r)
+    end
+
+    out.p, out.y, out.r = value.p, value.y, value.r
+    return out
 end
 
 local function normalizedVec(v)
     return M.NormalizeVectorPrecise(v, M.COMPUTE_VECTOR_EPSILON_SQR)
-end
-
-function isWorldTarget(ent)
-    return M.IsWorldTarget and M.IsWorldTarget(ent) or false
-end
-
-function hasTargetEntity(ent)
-    return M.HasTargetEntity and M.HasTargetEntity(ent) or isWorldTarget(ent) or IsValid(ent)
-end
-
-local function worldIdentityPos()
-    return VectorP(0, 0, 0)
-end
-
-local function worldIdentityAng()
-    return AngleP(0, 0, 0)
-end
-
-function traceHitsWorld(tr)
-    return tr ~= nil
-        and tr.Hit ~= false
-        and tr.HitSky ~= true
-        and isvector(tr.HitPos)
-        and (tr.HitWorld == true or isWorldTarget(tr.Entity))
-end
-
-function traceMatchesEntity(tr, ent)
-    if not tr then return false end
-
-    if isWorldTarget(ent) then
-        return traceHitsWorld(tr)
-    end
-
-    return IsValid(ent) and tr.Hit ~= false and tr.Entity == ent and isvector(tr.HitPos)
-end
-
-local function entityBasePos(ent)
-    if isWorldTarget(ent) then
-        return worldIdentityPos()
-    end
-
-    return IsValid(ent) and ent:GetPos() or nil
-end
-
-local function entityBaseAng(ent)
-    if isWorldTarget(ent) then
-        return worldIdentityAng()
-    end
-
-    return IsValid(ent) and ent:GetAngles() or nil
-end
-
-function worldPosFromLocalPoint(ent, localPos)
-    if not isvector(localPos) then return end
-
-    if isWorldTarget(ent) then
-        return copyVec(localPos)
-    end
-
-    local pos = entityBasePos(ent)
-    local ang = entityBaseAng(ent)
-    if not isvector(pos) or not isangle(ang) then return end
-
-    return LocalToWorldPrecise(localPos, AngleP(0, 0, 0), pos, ang)
-end
-
-function localPointFromWorldPos(ent, worldPos)
-    if not isvector(worldPos) then return end
-
-    if isWorldTarget(ent) then
-        return copyVec(worldPos)
-    end
-
-    local pos = entityBasePos(ent)
-    local ang = entityBaseAng(ent)
-    if not isvector(pos) or not isangle(ang) then return end
-
-    return WorldToLocalPrecise(worldPos, AngleP(0, 0, 0), pos, ang)
-end
-
-function localNormalFromWorld(ent, worldPos, worldNormal)
-    local worldPoint = copyVec(worldPos)
-    local normal = normalizedVec(worldNormal)
-    if not isvector(worldPoint) or not normal then return end
-
-    if isWorldTarget(ent) then
-        return copyVec(normal)
-    end
-
-    local localPos = localPointFromWorldPos(ent, worldPoint)
-    local pos = entityBasePos(ent)
-    local ang = entityBaseAng(ent)
-    if not isvector(localPos) or not isvector(pos) or not isangle(ang) then return end
-
-    local normalTip = WorldToLocalPrecise(worldPoint + normal, AngleP(0, 0, 0), pos, ang)
-    if not isvector(normalTip) then return end
-
-    return normalizedVec(normalTip - localPos)
-end
-
-function worldNormalFromLocal(ent, localPos, localNormal)
-    local normal = normalizedVec(localNormal)
-    if not normal then return end
-
-    if isWorldTarget(ent) then
-        return copyVec(normal)
-    end
-
-    local worldPos = worldPosFromLocalPoint(ent, localPos)
-    local pos = entityBasePos(ent)
-    local ang = entityBaseAng(ent)
-    if not isvector(worldPos) or not isvector(pos) or not isangle(ang) then return end
-
-    local worldTip = LocalToWorldPrecise(localPos + normal, AngleP(0, 0, 0), pos, ang)
-    if not isvector(worldTip) then return end
-
-    return normalizedVec(worldTip - worldPos)
-end
-
-function pointFromCandidate(candidate)
-    if not istable(candidate) or not isvector(candidate.localPos) then return end
-
-    local point = VectorP(candidate.localPos.x, candidate.localPos.y, candidate.localPos.z)
-    local localNormal = normalizedVec(candidate.localNormal)
-
-    if not localNormal and isvector(candidate.normal) then
-        local worldPos = isvector(candidate.worldPos) and candidate.worldPos or worldPosFromLocalPoint(candidate.ent, candidate.localPos)
-        localNormal = localNormalFromWorld(candidate.ent, worldPos, candidate.normal)
-    end
-
-    if localNormal then
-        point.normal = copyVec(localNormal)
-    end
-
-    if isWorldTarget(candidate.ent) then
-        point.world = true
-    end
-
-    return point
 end
 
 local function clientNumber(tool, name, fallback)
@@ -688,17 +639,17 @@ local function exactNormalKey(v)
 end
 
 local function buildTraceSample(ent, worldPos, worldNormal, tr)
-    if not hasTargetEntity(ent) then return end
+    if not geometry.hasTargetEntity(ent) then return end
 
     if tr then
-        if not traceMatchesEntity(tr, ent) then return end
+        if not geometry.traceMatchesEntity(tr, ent) then return end
         worldPos = copyVec(tr.HitPos)
         worldNormal = isvector(tr.HitNormal) and copyVec(tr.HitNormal) or tr.HitNormal
     end
 
     if not isvector(worldPos) then return end
 
-    local localPos = localPointFromWorldPos(ent, worldPos)
+    local localPos = geometry.localPointFromWorldPos(ent, worldPos)
     if not isvector(localPos) then return end
     localPos = copyVec(localPos)
 
@@ -706,7 +657,7 @@ local function buildTraceSample(ent, worldPos, worldNormal, tr)
     local localNormalKey
 
     if isvector(worldNormal) then
-        localNormal = localNormalFromWorld(ent, worldPos, worldNormal)
+        localNormal = geometry.localNormalFromWorld(ent, worldPos, worldNormal)
         if localNormal then
             localNormalKey = exactNormalKey(localNormal)
         else
@@ -725,26 +676,11 @@ end
 local function sampleWorldPos(ent, sample)
     if not istable(sample) then return end
 
-    if hasTargetEntity(ent) and isvector(sample.localPos) then
-        return worldPosFromLocalPoint(ent, sample.localPos)
+    if geometry.hasTargetEntity(ent) and isvector(sample.localPos) then
+        return geometry.worldPosFromLocalPoint(ent, sample.localPos)
     end
 
     return isvector(sample.pos) and sample.pos or nil
-end
-
-local function sampleWorldNormal(ent, sample)
-    if not istable(sample) then return end
-
-    if hasTargetEntity(ent) and isvector(sample.localPos) and isvector(sample.localNormal) then
-        local worldNormal = worldNormalFromLocal(ent, sample.localPos, sample.localNormal)
-        if worldNormal then
-            return worldNormal
-        end
-    end
-
-    if isvector(sample.normal) then
-        return normalizedVec(sample.normal)
-    end
 end
 
 local function sampleLocalPos(sample)
@@ -775,7 +711,7 @@ local function aggregateTraceProbes(samples)
 
                 for j = 1, #probes do
                     local existing = probes[j]
-            if isvector(existing.localNormal) and M.DotVectorsPrecise(existing.localNormal, localNormal) >= TRACE_PROBE_NORMAL_DOT_MIN then
+            if isvector(existing.localNormal) and M.DotVectorsPrecise(existing.localNormal, localNormal) >= PICK_CONFIG.traceProbeNormalDotMin then
                 probe = existing
                 break
             end
@@ -821,31 +757,22 @@ local function aggregateTraceProbes(samples)
     return probes
 end
 
-local function worldVectorFromLocalDirection(ent, localDir)
-    local localNormal = normalizedVec(localDir)
-    if not IsValid(ent) or not localNormal then return end
-
-    local worldOrigin = LocalToWorldPrecise(VectorP(0, 0, 0), AngleP(0, 0, 0), ent:GetPos(), ent:GetAngles())
-    local worldTip = LocalToWorldPrecise(localNormal, AngleP(0, 0, 0), ent:GetPos(), ent:GetAngles())
-    return normalizedVec(worldTip - worldOrigin)
-end
-
 local function buildTraceProbeCandidate(ent, localPos, localNormal, mode, probes, axisLocalDir)
-    if not hasTargetEntity(ent) or not isvector(localPos) then return end
+    if not geometry.hasTargetEntity(ent) or not isvector(localPos) then return end
 
-    local worldPos = worldPosFromLocalPoint(ent, localPos)
+    local worldPos = geometry.worldPosFromLocalPoint(ent, localPos)
     if not isvector(worldPos) then return end
 
     local storedLocalNormal = normalizedVec(localNormal)
-    local worldNormal = worldNormalFromLocal(ent, localPos, storedLocalNormal)
-    local worldAxisDir = worldNormalFromLocal(ent, localPos, axisLocalDir)
+    local worldNormal = geometry.worldNormalFromLocal(ent, localPos, storedLocalNormal)
+    local worldAxisDir = geometry.worldNormalFromLocal(ent, localPos, axisLocalDir)
 
     return {
         ent = ent,
         localPos = copyVec(localPos),
         worldPos = worldPos,
         localNormal = storedLocalNormal and copyVec(storedLocalNormal) or nil,
-        normal = worldNormal or worldAxisDir or (isWorldTarget(ent) and VectorP(0, 0, 1) or ent:GetUp()),
+        normal = worldNormal or worldAxisDir or (geometry.isWorldTarget(ent) and VectorP(0, 0, 1) or ent:GetUp()),
         mode = mode,
         probes = probes,
         axisLocalDir = isvector(axisLocalDir) and copyVec(axisLocalDir) or nil,
@@ -861,54 +788,16 @@ local function linkedGhostAlpha(alpha)
     return math.Clamp(math.floor(ghostAlpha(alpha) * 0.58), 28, 88)
 end
 
-local function modelScale(ent)
-    return math.max(tonumber(IsValid(ent) and ent:GetModelScale() or 1) or 1, M.MODEL_SCALE_EPSILON)
-end
-
+local modelScale = M.GetEntityModelScale
 local SCALE_IDENTITY = VectorP(1, 1, 1)
 local SCALE_ZERO = VectorP(0, 0, 0)
 
-local function vectorApprox(a, b, eps)
-    if not isvector(a) or not isvector(b) then return false end
-
-    eps = eps or M.UI_COMPARE_EPSILON
-
-    return math.abs(a.x - b.x) <= eps
-        and math.abs(a.y - b.y) <= eps
-        and math.abs(a.z - b.z) <= eps
-end
-
-local function parseScaleVector(value)
-    local vec = value
-
-    if isstring(value) then
-        if value == "" then return end
-        vec = VectorP(value)
-    end
-
-    if not isvector(vec) then return end
-
-    return VectorP(vec.x, vec.y, vec.z)
-end
-
-local function findSizeHandler(ent)
-    if not IsValid(ent) or not isfunction(ent.GetChildren) then return end
-
-    local children = ent:GetChildren()
-    for i = 1, #children do
-        local child = children[i]
-        if IsValid(child) and child:GetClass() == "sizehandler" then
-            return child
-        end
-    end
-end
-
-local function visualScale(ent)
-    local handler = findSizeHandler(ent)
+local function handlerVisualScale(ent)
+    local handler = M.FindSizeHandler(ent)
     if not IsValid(handler) or not isfunction(handler.GetVisualScale) then return end
 
-    local scale = parseScaleVector(handler:GetVisualScale())
-    if not isvector(scale) or vectorApprox(scale, SCALE_ZERO) or vectorApprox(scale, SCALE_IDENTITY) then
+    local scale = M.ParseScaleVector(handler:GetVisualScale())
+    if not isvector(scale) or M.VectorApprox(scale, SCALE_ZERO) or M.VectorApprox(scale, SCALE_IDENTITY) then
         return
     end
 
@@ -918,21 +807,52 @@ end
 local function applyGhostScale(ghost, src)
     if not IsValid(ghost) or not IsValid(src) then return end
 
-    ghost:SetModelScale(modelScale(src), 0)
+    local changed = false
+    local currentModelScale = M.GetEntityModelScale(src)
+    if ghost._magicAlignModelScale ~= currentModelScale then
+        ghost:SetModelScale(currentModelScale, 0)
+        ghost._magicAlignModelScale = currentModelScale
+        changed = true
+    end
 
-    local scale = visualScale(src)
+    local scale = handlerVisualScale(src)
     if scale then
-        local matrix = Matrix()
-        matrix:Scale(toVector(scale))
-        ghost:EnableMatrix("RenderMultiply", matrix)
-    else
+        local lastScale = ghost._magicAlignVisualScale
+        if not isvector(lastScale) or not M.VectorApprox(lastScale, scale) then
+            local matrix = Matrix()
+            matrix:Scale(toVector(scale))
+            ghost:EnableMatrix("RenderMultiply", matrix)
+            ghost._magicAlignVisualScale = copyVec(scale)
+            changed = true
+        end
+    elseif isvector(ghost._magicAlignVisualScale) then
         ghost:DisableMatrix("RenderMultiply")
+        ghost._magicAlignVisualScale = nil
+        changed = true
     end
 
     local mins, maxs = src:GetRenderBounds()
-    if isvector(mins) and isvector(maxs) then
+    if isvector(mins) and isvector(maxs)
+        and (not isvector(ghost._magicAlignRenderMins)
+            or not isvector(ghost._magicAlignRenderMaxs)
+            or not M.VectorApprox(ghost._magicAlignRenderMins, mins)
+            or not M.VectorApprox(ghost._magicAlignRenderMaxs, maxs)) then
         ghost:SetRenderBounds(mins, maxs)
+        ghost._magicAlignRenderMins = copyVec(mins)
+        ghost._magicAlignRenderMaxs = copyVec(maxs)
+        changed = true
     end
+
+    return changed
+end
+
+local function angleApprox(a, b, eps)
+    if not isangle(a) or not isangle(b) then return false end
+
+    eps = tonumber(eps) or M.UI_COMPARE_EPSILON
+    return math.abs(math.AngleDifference(a.p, b.p)) <= eps
+        and math.abs(math.AngleDifference(a.y, b.y)) <= eps
+        and math.abs(math.AngleDifference(a.r, b.r)) <= eps
 end
 
 local function revisionValue(value, depth)
@@ -974,7 +894,7 @@ local function resizeRevision(ent)
         parts[#parts + 1] = "noadvr"
     end
 
-    local handler = findSizeHandler(ent)
+    local handler = M.FindSizeHandler(ent)
     if IsValid(handler) then
         parts[#parts + 1] = isfunction(handler.GetActualPhysicsScale) and tostring(handler:GetActualPhysicsScale()) or "nophys"
         parts[#parts + 1] = isfunction(handler.GetVisualScale) and tostring(handler:GetVisualScale()) or "novis"
@@ -1041,6 +961,7 @@ local function resetBoundsEntry(entry)
     entry.maxs = nil
     entry.center = nil
     entry.requestRevision = nil
+    entry.nextRevisionCheck = nil
 end
 
 local function refreshBoundsEntry(ent, entry)
@@ -1056,6 +977,22 @@ local function refreshBoundsEntry(ent, entry)
     entry.revision = revision
 
     return revision
+end
+
+local READY_BOUNDS_REVISION_INTERVAL = 1
+
+local function maybeRefreshBoundsEntry(ent, entry, force)
+    if not istable(entry) then return end
+
+    if entry.ready and not force then
+        local now = RealTime()
+        if now < (entry.nextRevisionCheck or 0) then
+            return entry.revision
+        end
+        entry.nextRevisionCheck = now + READY_BOUNDS_REVISION_INTERVAL
+    end
+
+    return refreshBoundsEntry(ent, entry)
 end
 
 local function linkedPropIndex(state, ent)
@@ -1079,7 +1016,7 @@ local function removeLinkedGhost(state, ent)
         ghost:Remove()
     end
     ghosts[ent] = nil
-    clearCompatGhost(state, ent)
+    compatGhosts.clear(state, ent)
 end
 
 local function resetLinkedProps(state)
@@ -1089,14 +1026,14 @@ local function resetLinkedProps(state)
                 ghost:Remove()
             end
             state.linkedGhosts[ent] = nil
-            clearCompatGhost(state, ent)
+            compatGhosts.clear(state, ent)
         end
     end
 
     local compatLinked = state.compatGhosts and state.compatGhosts.linked or nil
     if istable(compatLinked) then
         for ent in pairs(compatLinked) do
-            clearCompatGhost(state, ent)
+            compatGhosts.clear(state, ent)
         end
     end
 
@@ -1154,9 +1091,9 @@ local function updateToolHelp(tool, state)
     if not tool then return end
 
     local stateName = istable(state) and state.state or nil
-    local description = TOOL_STATUS_DESCRIPTIONS[stateName] or TOOL_DEFAULT_DESCRIPTION
+    local description = TOOL_UI.statusDescriptions[stateName] or TOOL_UI.defaultDescription
     local showUse = istable(state) and state.preview ~= nil
-    local worldPoints = worldPointsApi()
+    local worldPoints = client.WorldPoints
     local showWorldPointHint = worldPoints
         and isfunction(worldPoints.hasToggleHint)
         and worldPoints.hasToggleHint(state)
@@ -1169,9 +1106,9 @@ local function updateToolHelp(tool, state)
 
     if lastToolShowsUse ~= showUse or lastToolShowsWorldPointHint ~= showWorldPointHint then
         if showUse then
-            tool.Information = showWorldPointHint and TOOL_INFORMATION_READY_WORLD_POINT or TOOL_INFORMATION_READY
+            tool.Information = showWorldPointHint and TOOL_UI.information.readyWorldPoint or TOOL_UI.information.ready
         else
-            tool.Information = showWorldPointHint and TOOL_INFORMATION_IDLE_WORLD_POINT or TOOL_INFORMATION_IDLE
+            tool.Information = showWorldPointHint and TOOL_UI.information.idleWorldPoint or TOOL_UI.information.idle
         end
         lastToolShowsUse = showUse
         lastToolShowsWorldPointHint = showWorldPointHint
@@ -1197,6 +1134,12 @@ local function ensureGhostModel(ghost, model)
         ghost:SetNoDraw(true)
         ghost:SetRenderMode(RENDERMODE_TRANSCOLOR)
         ghost:DrawShadow(false)
+        local materials = ghost:GetMaterials()
+        ghost._magicAlignSubMaterialSlots = materials and #materials or 0
+        ghost._magicAlignNeedsBoneSetup = true
+    elseif ghost._magicAlignSubMaterialSlots == nil then
+        local materials = ghost:GetMaterials()
+        ghost._magicAlignSubMaterialSlots = materials and #materials or 0
     end
 
     return ghost
@@ -1205,27 +1148,81 @@ end
 local function applyGhostAppearance(ghost, src, pos, ang, alphaFn)
     if not IsValid(ghost) or not IsValid(src) then return end
 
-    ghost:SetPos(toVector(pos))
-    ghost:SetAngles(toAngle(ang))
-    ghost:SetSkin(src:GetSkin() or 0)
-    ghost:SetMaterial(src:GetMaterial() or "")
-    for i = 0, src:GetNumBodyGroups() - 1 do
-        ghost:SetBodygroup(i, src:GetBodygroup(i))
+    local needsBoneSetup = ghost._magicAlignNeedsBoneSetup == true
+
+    if not isvector(ghost._magicAlignPos) or not M.VectorApprox(ghost._magicAlignPos, pos) then
+        ghost:SetPos(toVector(pos))
+        ghost._magicAlignPos = setVec(ghost._magicAlignPos, pos)
+    end
+    if not angleApprox(ghost._magicAlignAng, ang) then
+        ghost:SetAngles(toAngle(ang))
+        ghost._magicAlignAng = setAng(ghost._magicAlignAng, ang)
     end
 
+    local skin = src:GetSkin() or 0
+    if ghost._magicAlignSkin ~= skin then
+        ghost:SetSkin(skin)
+        ghost._magicAlignSkin = skin
+        needsBoneSetup = true
+    end
+
+    local material = src:GetMaterial() or ""
+    if ghost._magicAlignMaterial ~= material then
+        ghost:SetMaterial(material)
+        ghost._magicAlignMaterial = material
+    end
+
+    local bodygroups = ghost._magicAlignBodygroups or {}
+    ghost._magicAlignBodygroups = bodygroups
+    for i = 0, src:GetNumBodyGroups() - 1 do
+        local bodygroup = src:GetBodygroup(i)
+        if bodygroups[i] ~= bodygroup then
+            ghost:SetBodygroup(i, bodygroup)
+            bodygroups[i] = bodygroup
+            needsBoneSetup = true
+        end
+    end
+
+    local subMaterials = ghost._magicAlignSubMaterials or {}
+    ghost._magicAlignSubMaterials = subMaterials
     local subCount = math.max(
-        src:GetMaterials() and #src:GetMaterials() or 0,
-        ghost:GetMaterials() and #ghost:GetMaterials() or 0
+        ghost._magicAlignSubMaterialSlots or 0,
+        ghost._magicAlignSubMaterialCount or 0
     )
     for i = 0, subCount - 1 do
-        ghost:SetSubMaterial(i, src:GetSubMaterial(i) or "")
+        local subMaterial = src:GetSubMaterial(i) or ""
+        if subMaterials[i] ~= subMaterial then
+            ghost:SetSubMaterial(i, subMaterial)
+            subMaterials[i] = subMaterial
+            needsBoneSetup = true
+        end
     end
+    ghost._magicAlignSubMaterialCount = subCount
 
     local srcColor = src:GetColor()
-    ghost:SetColor(Color(srcColor.r, srcColor.g, srcColor.b, alphaFn(srcColor.a)))
-    applyGhostScale(ghost, src)
-    ghost:SetupBones()
-    ghost:SetNoDraw(false)
+    local alpha = alphaFn(srcColor.a)
+    if ghost._magicAlignColorR ~= srcColor.r
+        or ghost._magicAlignColorG ~= srcColor.g
+        or ghost._magicAlignColorB ~= srcColor.b
+        or ghost._magicAlignColorA ~= alpha then
+        ghost:SetColor(Color(srcColor.r, srcColor.g, srcColor.b, alpha))
+        ghost._magicAlignColorR = srcColor.r
+        ghost._magicAlignColorG = srcColor.g
+        ghost._magicAlignColorB = srcColor.b
+        ghost._magicAlignColorA = alpha
+    end
+
+    if applyGhostScale(ghost, src) then
+        needsBoneSetup = true
+    end
+
+    if needsBoneSetup then
+        ghost:SetupBones()
+        ghost._magicAlignNeedsBoneSetup = false
+    end
+    if ghost.GetNoDraw and ghost:GetNoDraw() then
+        ghost:SetNoDraw(false)
+    end
 end
 
 local function hideGhosts(state)
@@ -1239,7 +1236,7 @@ local function hideGhosts(state)
         end
     end
 
-    clearAllCompatGhosts(state)
+    compatGhosts.clearAll(state)
 end
 
 hook.Remove("Think", "MagicAlignHideGhostsWhenInactive")
@@ -1263,14 +1260,14 @@ local function restoreSmartSnap()
     smartSnapSuppression.active = false
     smartSnapSuppression.restoreValue = nil
 
-    local cvar = GetConVar(SMARTSNAP_ENABLED_CVAR)
+    local cvar = GetConVar(SMARTSNAP_CONFIG.enabledCvar)
     if cvar and restoreValue ~= nil and cvar:GetString() ~= restoreValue then
-        RunConsoleCommand(SMARTSNAP_ENABLED_CVAR, restoreValue)
+        RunConsoleCommand(SMARTSNAP_CONFIG.enabledCvar, restoreValue)
     end
 end
 
 local function shouldSuppressSmartSnap()
-    local setting = GetConVar(SMARTSNAP_DISABLE_CVAR)
+    local setting = GetConVar(SMARTSNAP_CONFIG.disableCvar)
     if not setting or not setting:GetBool() then return false end
 
     local ply = LocalPlayer()
@@ -1278,7 +1275,7 @@ local function shouldSuppressSmartSnap()
 end
 
 local function updateSmartSnapSuppression()
-    local cvar = GetConVar(SMARTSNAP_ENABLED_CVAR)
+    local cvar = GetConVar(SMARTSNAP_CONFIG.enabledCvar)
     if not cvar then return end
 
     if shouldSuppressSmartSnap() then
@@ -1288,7 +1285,7 @@ local function updateSmartSnapSuppression()
         end
 
         if cvar:GetBool() then
-            RunConsoleCommand(SMARTSNAP_ENABLED_CVAR, "0")
+            RunConsoleCommand(SMARTSNAP_CONFIG.enabledCvar, "0")
         end
 
         return
@@ -1325,7 +1322,7 @@ local function ringRotationDeltaSign(key)
 end
 
 local function clampRotationSnapIndex(index)
-    return math.Clamp(math.Round(tonumber(index) or DEFAULT_ROTATION_SNAP_INDEX), 1, #ROTATION_SNAP_DIVISORS)
+    return math.Clamp(math.Round(tonumber(index) or ROTATION_CONFIG.defaultSnapIndex), 1, #ROTATION_CONFIG.snapDivisors)
 end
 
 local function clampTranslationSnapStep(step)
@@ -1333,13 +1330,13 @@ local function clampTranslationSnapStep(step)
 end
 
 local function rotationSnapDivisions(tool)
-    local index = clampRotationSnapIndex(clientNumber(tool, "rotation_snap", DEFAULT_ROTATION_SNAP_INDEX))
-    return ROTATION_SNAP_DIVISORS[index], index
+    local index = clampRotationSnapIndex(clientNumber(tool, "rotation_snap", ROTATION_CONFIG.defaultSnapIndex))
+    return ROTATION_CONFIG.snapDivisors[index], index
 end
 
 local function rotationSnapStep(tool)
     local divisions = rotationSnapDivisions(tool)
-    return 360 / math.max(divisions or ROTATION_SNAP_DIVISORS[DEFAULT_ROTATION_SNAP_INDEX], 1)
+    return 360 / math.max(divisions or ROTATION_CONFIG.snapDivisors[ROTATION_CONFIG.defaultSnapIndex], 1)
 end
 
 local function translationSnapStep(tool)
@@ -1454,11 +1451,10 @@ local function requestBounds(state, ent)
     state = ensureStateShape(state)
     local entry = boundsEntry(state, ent)
     if not entry then return end
-    local revision = refreshBoundsEntry(ent, entry)
+    local revision = maybeRefreshBoundsEntry(ent, entry)
 
     local now = RealTime()
     if entry.ready then return true end
-    if entry.pending and now - entry.requestedAt < M.AABB_REQUEST_COOLDOWN then return false end
     if now - entry.requestedAt < M.AABB_REQUEST_COOLDOWN then return false end
 
     entry.pending = true
@@ -1475,7 +1471,7 @@ end
 
 local function boundsFor(state, ent)
     local entry = IsValid(ent) and state.bounds[ent] or nil
-    refreshBoundsEntry(ent, entry)
+    maybeRefreshBoundsEntry(ent, entry)
     return istable(entry) and entry.ready and entry or nil
 end
 
@@ -1540,56 +1536,208 @@ hook.Add("PlayerBindPress", "MagicAlignCycleReferenceSpace", function(ply, bind,
     return true
 end)
 
-local function cfg(tool)
-    return {
-        gridA = math.Clamp(math.Round(clientNumber(tool, "grid_a", 12)), 2, 24),
-        gridAMin = math.Clamp(math.Round(clientNumber(tool, "grid_a_min", 3)), 2, 24),
-        gridB = math.Clamp(math.Round(clientNumber(tool, "grid_b", 8)), 2, 24),
-        gridBMin = math.Clamp(math.Round(clientNumber(tool, "grid_b_min", 2)), 2, 24),
-        gridBEnabled = clientNumber(tool, "grid_b_enable", 0) == 1,
-        minLength = math.Clamp(math.Round(clientNumber(tool, "min_length", 4)), 0, 12),
-        traceSnapLength = clientNumber(tool, "trace_snap_length", 5),
-        translationSnap = translationSnapStep(tool),
-        worldTarget = clientNumber(tool, "world_target", 1) == 1,
-        alt = input.IsKeyDown(KEY_LALT) or input.IsKeyDown(KEY_RALT),
-        shift = input.IsKeyDown(KEY_LSHIFT) or input.IsKeyDown(KEY_RSHIFT)
-    }
-end
-
-local function offsets(tool)
-    local out = {}
-
-    local function effectiveOffsetValue(space, key)
-        local fallback = clientNumber(tool, space .. "_" .. key, 0)
-        local manager = M.FormulaManager
-        if not manager then
-            return fallback
-        end
-
-        local snapshot = manager:GetSnapshot(("magic_align_%s_%s"):format(space, key))
-        if snapshot and snapshot.rawMode == "formula" and snapshot.storedNumericValue ~= nil then
-            return tonumber(snapshot.value) or tonumber(snapshot.storedNumericValue) or fallback
-        end
-
-        return fallback
-    end
-
-    for _, space in ipairs(M.SPACES) do
-        out[space] = {
-            pos = VectorP(
-                effectiveOffsetValue(space, "px"),
-                effectiveOffsetValue(space, "py"),
-                effectiveOffsetValue(space, "pz")
-            ),
-            rot = AngleP(
-                effectiveOffsetValue(space, "pitch"),
-                effectiveOffsetValue(space, "yaw"),
-                effectiveOffsetValue(space, "roll")
-            )
-        }
-    end
+local function cfg(tool, out)
+    out = out or {}
+    out.gridA = math.Clamp(math.Round(clientNumber(tool, "grid_a", 12)), 2, 24)
+    out.gridAMin = math.Clamp(math.Round(clientNumber(tool, "grid_a_min", 3)), 2, 24)
+    out.gridB = math.Clamp(math.Round(clientNumber(tool, "grid_b", 8)), 2, 24)
+    out.gridBMin = math.Clamp(math.Round(clientNumber(tool, "grid_b_min", 2)), 2, 24)
+    out.gridBEnabled = clientNumber(tool, "grid_b_enable", 0) == 1
+    out.minLength = math.Clamp(math.Round(clientNumber(tool, "min_length", 4)), 0, 12)
+    out.traceSnapLength = clientNumber(tool, "trace_snap_length", 5)
+    out.translationSnap = translationSnapStep(tool)
+    out.worldTarget = clientNumber(tool, "world_target", 1) == 1
+    out.alt = input.IsKeyDown(KEY_LALT) or input.IsKeyDown(KEY_RALT)
+    out.shift = input.IsKeyDown(KEY_LSHIFT) or input.IsKeyDown(KEY_RSHIFT)
 
     return out
+end
+
+local OFFSET_KEYS = { "px", "py", "pz", "pitch", "yaw", "roll" }
+local OFFSET_CLIENT_NAMES = {}
+local OFFSET_CVAR_NAMES = {}
+local offsetConVarRevision = 0
+local offsetChangeCallbacksRegistered = false
+
+for _, space in ipairs(M.SPACES or {}) do
+    local clientNames = {}
+    local cvarNames = {}
+    OFFSET_CLIENT_NAMES[space] = clientNames
+    OFFSET_CVAR_NAMES[space] = cvarNames
+
+    for i = 1, #OFFSET_KEYS do
+        local key = OFFSET_KEYS[i]
+        local clientName = ("%s_%s"):format(space, key)
+        clientNames[key] = clientName
+        cvarNames[key] = "magic_align_" .. clientName
+    end
+end
+
+local function registerOffsetChangeCallbacks()
+    if offsetChangeCallbacksRegistered then
+        return true
+    end
+
+    if not CLIENT or not cvars or not cvars.AddChangeCallback then
+        return false
+    end
+
+    offsetChangeCallbacksRegistered = true
+
+    for _, space in ipairs(M.SPACES or {}) do
+        local cvarNames = OFFSET_CVAR_NAMES[space]
+        for i = 1, #OFFSET_KEYS do
+            local key = OFFSET_KEYS[i]
+            local cvarName = cvarNames and cvarNames[key]
+            if cvarName then
+                local callbackId = ("magic_align_offset_cache_%s_%s"):format(space, key)
+                if cvars.RemoveChangeCallback then
+                    cvars.RemoveChangeCallback(cvarName, callbackId)
+                end
+
+                cvars.AddChangeCallback(cvarName, function()
+                    offsetConVarRevision = offsetConVarRevision + 1
+                end, callbackId)
+            end
+        end
+    end
+
+    return true
+end
+
+local function currentFrameNumber()
+    return isfunction(FrameNumber) and FrameNumber() or nil
+end
+
+local function offsetFormulaRevisionsChanged(manager, cache)
+    local managerRevision = manager and isfunction(manager.GetRevision) and manager:GetRevision() or nil
+    if cache.managerRevision == managerRevision then
+        return false
+    end
+
+    cache.managerRevision = managerRevision
+
+    if not (manager and isfunction(manager.GetEntryRevision)) then
+        return true
+    end
+
+    local revisions = cache.formulaRevisions
+    if not revisions then
+        revisions = {}
+        cache.formulaRevisions = revisions
+    end
+
+    local changed = false
+    for _, space in ipairs(M.SPACES or {}) do
+        local cvarNames = OFFSET_CVAR_NAMES[space]
+        for i = 1, #OFFSET_KEYS do
+            local cvarName = cvarNames and cvarNames[OFFSET_KEYS[i]]
+            if cvarName then
+                local revision = manager:GetEntryRevision(cvarName)
+                if revisions[cvarName] ~= revision then
+                    revisions[cvarName] = revision
+                    changed = true
+                end
+            end
+        end
+    end
+
+    return changed
+end
+
+local function effectiveOffsetValue(tool, clientName, cvarName)
+    local fallback = clientNumber(tool, clientName, 0)
+    local manager = M.FormulaManager
+    if manager and isfunction(manager.GetNumericValue) then
+        return manager:GetNumericValue(cvarName, fallback)
+    end
+
+    return fallback
+end
+
+local function cachedOffsets(tool, state)
+    state._magicAlignOffsetCache = state._magicAlignOffsetCache or { out = {}, values = {}, revision = 0 }
+    local cache = state._magicAlignOffsetCache
+    local frame = currentFrameNumber()
+    if cache.initialized and frame ~= nil and cache.checkedFrame == frame then
+        return cache.out, cache.revision
+    end
+    cache.checkedFrame = frame
+
+    local callbacksReady = registerOffsetChangeCallbacks()
+    local manager = M.FormulaManager
+    local formulasChanged = offsetFormulaRevisionsChanged(manager, cache)
+    local cvarsChanged = cache.offsetConVarRevision ~= offsetConVarRevision
+    if cache.initialized and callbacksReady and not formulasChanged and not cvarsChanged then
+        return cache.out, cache.revision
+    end
+
+    cache.initialized = true
+    cache.offsetConVarRevision = offsetConVarRevision
+
+    for _, space in ipairs(M.SPACES) do
+        local values = cache.values[space]
+        if not values then
+            values = {}
+            cache.values[space] = values
+        end
+
+        local changed = false
+        local clientNames = OFFSET_CLIENT_NAMES[space]
+        local cvarNames = OFFSET_CVAR_NAMES[space]
+        for i = 1, #OFFSET_KEYS do
+            local key = OFFSET_KEYS[i]
+            local clientName = clientNames and clientNames[key] or (space .. "_" .. key)
+            local cvarName = cvarNames and cvarNames[key] or ("magic_align_" .. clientName)
+            local value = effectiveOffsetValue(tool, clientName, cvarName)
+            if values[key] ~= value then
+                values[key] = value
+                changed = true
+            end
+        end
+
+        local item = cache.out[space]
+        if not item then
+            item = { pos = VectorP(0, 0, 0), rot = AngleP(0, 0, 0) }
+            cache.out[space] = item
+            changed = true
+        end
+
+        if changed then
+            item.pos.x, item.pos.y, item.pos.z = values.px, values.py, values.pz
+            item.rot.p, item.rot.y, item.rot.r = values.pitch, values.yaw, values.roll
+            cache.revision = cache.revision + 1
+        end
+    end
+
+    return cache.out, cache.revision
+end
+
+local function cachedAnchorOptions(tool, state, side)
+    state._magicAlignAnchorOptionCache = state._magicAlignAnchorOptionCache or {}
+    local cache = state._magicAlignAnchorOptionCache[side]
+    if not cache then
+        cache = { options = {}, revision = 0 }
+        state._magicAlignAnchorOptionCache[side] = cache
+    end
+
+    local prefix = side
+    if prefix ~= "" and not string.EndsWith(prefix, "_") then
+        prefix = prefix .. "_"
+    end
+
+    local mid12 = M.ClampAnchorPercent(tool:GetClientInfo(prefix .. "mid12_pct"))
+    local mid23 = M.ClampAnchorPercent(tool:GetClientInfo(prefix .. "mid23_pct"))
+    local mid13 = M.ClampAnchorPercent(tool:GetClientInfo(prefix .. "mid13_pct"))
+
+    if cache.options.mid12_pct ~= mid12 or cache.options.mid23_pct ~= mid23 or cache.options.mid13_pct ~= mid13 then
+        cache.options.mid12_pct = mid12
+        cache.options.mid23_pct = mid23
+        cache.options.mid13_pct = mid13
+        cache.revision = cache.revision + 1
+    end
+
+    return cache.options, cache.revision
 end
 
 local function setValue(space, key, value)
@@ -1817,19 +1965,6 @@ local function rayBoxFaceHit(startPos, dir, mins, maxs)
     end
 end
 
-local function pointNearAABBFace(localPos, mins, maxs, epsilon)
-    if not isvector(localPos) or not isvector(mins) or not isvector(maxs) then return false end
-
-    epsilon = tonumber(epsilon) or 0
-
-    return math.abs(localPos.x - mins.x) <= epsilon
-        or math.abs(localPos.x - maxs.x) <= epsilon
-        or math.abs(localPos.y - mins.y) <= epsilon
-        or math.abs(localPos.y - maxs.y) <= epsilon
-        or math.abs(localPos.z - mins.z) <= epsilon
-        or math.abs(localPos.z - maxs.z) <= epsilon
-end
-
 local function projectFacePointToProp(ent, face, localPos, worldNormal, fallbackLocalPos, fallbackWorldPos, fallbackNormal)
     if not IsValid(ent) or not face or not isvector(localPos) or not isvector(worldNormal) then
         return fallbackLocalPos, fallbackWorldPos, fallbackNormal
@@ -1842,76 +1977,86 @@ local function projectFacePointToProp(ent, face, localPos, worldNormal, fallback
     outward = normalizedVec(outward)
     if not outward then return fallbackLocalPos, fallbackWorldPos, fallbackNormal end
 
-    local gridWorldPos = LocalToWorldPrecise(localPos, AngleP(0, 0, 0), ent:GetPos(), ent:GetAngles())
+    local entPos = ent:GetPos()
+    local entAng = ent:GetAngles()
+    local gridWorldPos = LocalToWorldPosPrecise(localPos, entPos, entAng)
     local gridNormal = outward
-    local backDist = FACE_TRACE_OUTSIDE_OFFSET
+    local backDist = PICK_CONFIG.faceTraceOutsideOffset
     local traceStart = gridWorldPos + gridNormal * backDist
     local orthogonalTrace = traceOnlyEntity(
         ent,
         traceStart,
-        gridWorldPos - gridNormal * (faceAxisLength(face) + backDist + FACE_TRACE_END_OVERSHOOT)
+        gridWorldPos - gridNormal * (faceAxisLength(face) + backDist + PICK_CONFIG.faceTraceEndOvershoot)
     )
 
     local hitTrace = orthogonalTrace
     if not hitTrace and isvector(face.center) then
-        local centerWorldPos = LocalToWorldPrecise(face.center, AngleP(0, 0, 0), ent:GetPos(), ent:GetAngles())
+        local centerWorldPos = LocalToWorldPosPrecise(face.center, entPos, entAng)
         hitTrace = traceOnlyEntity(ent, traceStart, centerWorldPos)
     end
 
     if hitTrace and isvector(hitTrace.HitPos) then
-        return WorldToLocalPrecise(hitTrace.HitPos, AngleP(0, 0, 0), ent:GetPos(), ent:GetAngles()), copyVec(hitTrace.HitPos), copyVec(hitTrace.HitNormal)
+        return WorldToLocalPosPrecise(hitTrace.HitPos, entPos, entAng), copyVec(hitTrace.HitPos), copyVec(hitTrace.HitNormal)
     end
 
     return fallbackLocalPos, fallbackWorldPos, fallbackNormal
 end
 
-local function faceCandidate(ent, tr, settings, box)
-    if tr.Entity ~= ent or not isvector(tr.HitPos) then return end
-
-    local localHit = WorldToLocalPrecise(tr.HitPos, AngleP(0, 0, 0), ent:GetPos(), ent:GetAngles())
-    if not box then return end
-
-    local mins, maxs = box.mins, box.maxs
-    local center = (mins + maxs) * 0.5
+local function localAimRay(ent)
     local ply = LocalPlayer()
     local eye = IsValid(ply) and ply:GetShootPos() or nil
     local aim = IsValid(ply) and ply:GetAimVector() or nil
-    local localEye = isvector(eye) and WorldToLocalPrecise(eye, AngleP(0, 0, 0), ent:GetPos(), ent:GetAngles()) or nil
-    local localAim = isvector(eye) and isvector(aim) and (WorldToLocalPrecise(eye + aim * 16384, AngleP(0, 0, 0), ent:GetPos(), ent:GetAngles()) - localEye) or nil
+    local entPos = ent:GetPos()
+    local entAng = ent:GetAngles()
+    local localEye = isvector(eye) and WorldToLocalPosPrecise(eye, entPos, entAng) or nil
+    local localAim = isvector(eye)
+        and isvector(aim)
+        and (WorldToLocalPosPrecise(eye + aim * 16384, entPos, entAng) - localEye)
+        or nil
 
     if isvector(localAim) and M.VectorLengthSqrPrecise(localAim) > M.PICKING_VECTOR_EPSILON_SQR then
-        localAim = normalizedVec(localAim)
-    else
-        localAim = nil
+        return localEye, normalizedVec(localAim)
     end
 
+    return localEye
+end
+
+local function fallbackFaceAxis(ent, tr, localHit)
+    local localNormal = WorldToLocalPosPrecise(tr.HitPos + tr.HitNormal, ent:GetPos(), ent:GetAngles()) - localHit
+    localNormal = normalizedVec(localNormal)
+    if not localNormal then return end
+
+    local axis, sign = 1, localNormal.x >= 0 and 1 or -1
+    local absX, absY, absZ = math.abs(localNormal.x), math.abs(localNormal.y), math.abs(localNormal.z)
+    if absY > absX and absY > absZ then
+        axis, sign = 2, localNormal.y >= 0 and 1 or -1
+    elseif absZ > absX and absZ > absY then
+        axis, sign = 3, localNormal.z >= 0 and 1 or -1
+    end
+
+    return axis, sign
+end
+
+local function resolveFaceHit(ent, tr, mins, maxs, localHit)
+    local localEye, localAim = localAimRay(ent)
     local boxFaceHit = isvector(localEye) and isvector(localAim) and rayBoxFaceHit(localEye, localAim, mins, maxs) or nil
     local axis = boxFaceHit and boxFaceHit.axis or nil
     local sign = boxFaceHit and boxFaceHit.sign or nil
     local raw = boxFaceHit and boxFaceHit.point or VectorP(localHit.x, localHit.y, localHit.z)
 
-    if not axis or not sign then
-        local localNormal = WorldToLocalPrecise(tr.HitPos + tr.HitNormal, AngleP(0, 0, 0), ent:GetPos(), ent:GetAngles()) - localHit
-        localNormal = normalizedVec(localNormal)
-        if not localNormal then return end
-
-        axis, sign = 1, localNormal.x >= 0 and 1 or -1
-        local absX, absY, absZ = math.abs(localNormal.x), math.abs(localNormal.y), math.abs(localNormal.z)
-        if absY > absX and absY > absZ then
-            axis, sign = 2, localNormal.y >= 0 and 1 or -1
-        elseif absZ > absX and absZ > absY then
-            axis, sign = 3, localNormal.z >= 0 and 1 or -1
-        end
+    if axis and sign then
+        return axis, sign, raw
     end
 
-    local face = {
-        axis = axis,
-        sign = sign,
-        mins = mins,
-        maxs = maxs
-    }
+    axis, sign = fallbackFaceAxis(ent, tr, localHit)
+    if not axis or not sign then return end
 
+    return axis, sign, raw
+end
+
+local function buildFacePlane(axis, sign, mins, maxs, raw)
     local fixed, uMin, uMax, vMin, vMax, u, v, corners
+
     if axis == 1 then
         fixed = sign > 0 and maxs.x or mins.x
         uMin, uMax, vMin, vMax = mins.y, maxs.y, mins.z, maxs.z
@@ -1944,116 +2089,151 @@ local function faceCandidate(ent, tr, settings, box)
         }
     end
 
-    local localPos = VectorP(raw.x, raw.y, raw.z)
-    local bestU
-    local bestV
-    local bestGridU
-    local bestGridV
-    local bestGridUId
-    local bestGridVId
-    local bestIndexU
-    local bestIndexV
-    local bestPercentU
-    local bestPercentV
+    return {
+        fixed = fixed,
+        uMin = uMin,
+        uMax = uMax,
+        vMin = vMin,
+        vMax = vMax,
+        u = u,
+        v = v,
+        corners = corners
+    }
+end
 
+local function snapFaceCoordinates(settings, face, u, v)
     if settings.shift then
-        bestU = math.Clamp(u, uMin, uMax)
-        bestV = math.Clamp(v, vMin, vMax)
-    else
-        local sizeU = uMax - uMin
-        local sizeV = vMax - vMin
-        local divAU, stepAU = pickGridDivisions(sizeU, settings.gridA, settings.gridAMin, settings.minLength)
-        local divAV, stepAV = pickGridDivisions(sizeV, settings.gridA, settings.gridAMin, settings.minLength)
-        local snapAU, indexAU, percentAU = snapToGrid(u, uMin, uMax, stepAU, divAU)
-        local snapAV, indexAV, percentAV = snapToGrid(v, vMin, vMax, stepAV, divAV)
-        bestU = snapAU
-        bestV = snapAV
-        bestGridU = nil
-        bestGridV = nil
-        bestGridUId = "A"
-        bestGridVId = "A"
-        bestIndexU, bestIndexV = indexAU, indexAV
-        bestPercentU, bestPercentV = percentAU, percentAV
-        local bestUDist = (u - snapAU) ^ 2
-        local bestVDist = (v - snapAV) ^ 2
-
-        face.gridA = {
-            stepU = stepAU,
-            stepV = stepAV,
-            divU = divAU,
-            divV = divAV,
-            uMin = uMin,
-            uMax = uMax,
-            vMin = vMin,
-            vMax = vMax
+        return {
+            u = math.Clamp(u, face.uMin, face.uMax),
+            v = math.Clamp(v, face.vMin, face.vMax)
         }
-        bestGridU = face.gridA
-        bestGridV = face.gridA
+    end
 
-        if settings.gridBEnabled then
-            local divBU, stepBU = pickGridDivisions(sizeU, settings.gridB, settings.gridBMin, settings.minLength)
-            local divBV, stepBV = pickGridDivisions(sizeV, settings.gridB, settings.gridBMin, settings.minLength)
-            local snapBU, indexBU, percentBU = snapToGrid(u, uMin, uMax, stepBU, divBU)
-            local snapBV, indexBV, percentBV = snapToGrid(v, vMin, vMax, stepBV, divBV)
-            local distBU = (u - snapBU) ^ 2
-            local distBV = (v - snapBV) ^ 2
+    local sizeU = face.uMax - face.uMin
+    local sizeV = face.vMax - face.vMin
+    local divAU, stepAU = pickGridDivisions(sizeU, settings.gridA, settings.gridAMin, settings.minLength)
+    local divAV, stepAV = pickGridDivisions(sizeV, settings.gridA, settings.gridAMin, settings.minLength)
+    local snapAU, indexAU, percentAU = snapToGrid(u, face.uMin, face.uMax, stepAU, divAU)
+    local snapAV, indexAV, percentAV = snapToGrid(v, face.vMin, face.vMax, stepAV, divAV)
+    local best = {
+        u = snapAU,
+        v = snapAV,
+        gridU = nil,
+        gridV = nil,
+        gridUId = "A",
+        gridVId = "A",
+        indexU = indexAU,
+        indexV = indexAV,
+        percentU = percentAU,
+        percentV = percentAV
+    }
+    local bestUDist = (u - snapAU) ^ 2
+    local bestVDist = (v - snapAV) ^ 2
 
-            face.gridB = {
-                stepU = stepBU,
-                stepV = stepBV,
-                divU = divBU,
-                divV = divBV,
-                uMin = uMin,
-                uMax = uMax,
-                vMin = vMin,
-                vMax = vMax
-            }
+    face.gridA = {
+        stepU = stepAU,
+        stepV = stepAV,
+        divU = divAU,
+        divV = divAV,
+        uMin = face.uMin,
+        uMax = face.uMax,
+        vMin = face.vMin,
+        vMax = face.vMax
+    }
+    best.gridU = face.gridA
+    best.gridV = face.gridA
 
-            if distBU < bestUDist then
-                bestU = snapBU
-                bestUDist = distBU
-                bestGridU = face.gridB
-                bestGridUId = "B"
-                bestIndexU = indexBU
-                bestPercentU = percentBU
-            end
+    if settings.gridBEnabled then
+        local divBU, stepBU = pickGridDivisions(sizeU, settings.gridB, settings.gridBMin, settings.minLength)
+        local divBV, stepBV = pickGridDivisions(sizeV, settings.gridB, settings.gridBMin, settings.minLength)
+        local snapBU, indexBU, percentBU = snapToGrid(u, face.uMin, face.uMax, stepBU, divBU)
+        local snapBV, indexBV, percentBV = snapToGrid(v, face.vMin, face.vMax, stepBV, divBV)
+        local distBU = (u - snapBU) ^ 2
+        local distBV = (v - snapBV) ^ 2
 
-            if distBV < bestVDist then
-                bestV = snapBV
-                bestVDist = distBV
-                bestGridV = face.gridB
-                bestGridVId = "B"
-                bestIndexV = indexBV
-                bestPercentV = percentBV
-            end
+        face.gridB = {
+            stepU = stepBU,
+            stepV = stepBV,
+            divU = divBU,
+            divV = divBV,
+            uMin = face.uMin,
+            uMax = face.uMax,
+            vMin = face.vMin,
+            vMax = face.vMax
+        }
+
+        if distBU < bestUDist then
+            best.u = snapBU
+            bestUDist = distBU
+            best.gridU = face.gridB
+            best.gridUId = "B"
+            best.indexU = indexBU
+            best.percentU = percentBU
+        end
+
+        if distBV < bestVDist then
+            best.v = snapBV
+            bestVDist = distBV
+            best.gridV = face.gridB
+            best.gridVId = "B"
+            best.indexV = indexBV
+            best.percentV = percentBV
         end
     end
 
+    return best
+end
+
+local function faceLocalPosAndOrigin(axis, fixed, u, v, center)
     if axis == 1 then
-        localPos = VectorP(fixed, bestU, bestV)
-        face.origin = VectorP(fixed, center.y, center.z)
+        return VectorP(fixed, u, v), VectorP(fixed, center.y, center.z)
     elseif axis == 2 then
-        localPos = VectorP(bestU, fixed, bestV)
-        face.origin = VectorP(center.x, fixed, center.z)
-    else
-        localPos = VectorP(bestU, bestV, fixed)
-        face.origin = VectorP(center.x, center.y, fixed)
+        return VectorP(u, fixed, v), VectorP(center.x, fixed, center.z)
     end
 
-    face.uSnap, face.vSnap = bestU, bestV
-    face.snapGridU = bestGridU
-    face.snapGridV = bestGridV
-    face.snapGridUId = bestGridUId
-    face.snapGridVId = bestGridVId
-    face.snapIndexU, face.snapIndexV = bestIndexU, bestIndexV
-    face.snapPercentU, face.snapPercentV = bestPercentU, bestPercentV
+    return VectorP(u, v, fixed), VectorP(center.x, center.y, fixed)
+end
 
-    face.fixed = fixed
-    face.corners = corners
+local function faceCandidate(ent, tr, settings, box)
+    if tr.Entity ~= ent or not isvector(tr.HitPos) then return end
+
+    local entPos = ent:GetPos()
+    local entAng = ent:GetAngles()
+    local localHit = WorldToLocalPosPrecise(tr.HitPos, entPos, entAng)
+    if not box then return end
+
+    local mins, maxs = box.mins, box.maxs
+    local center = (mins + maxs) * 0.5
+    local axis, sign, raw = resolveFaceHit(ent, tr, mins, maxs, localHit)
+    if not axis or not sign then return end
+
+    local face = {
+        axis = axis,
+        sign = sign,
+        mins = mins,
+        maxs = maxs
+    }
+
+    local plane = buildFacePlane(axis, sign, mins, maxs, raw)
+    local snapped = snapFaceCoordinates(settings, plane, plane.u, plane.v)
+    local localPos, faceOrigin = faceLocalPosAndOrigin(axis, plane.fixed, snapped.u, snapped.v, center)
+
+    face.gridA = plane.gridA
+    face.gridB = plane.gridB
+    face.uSnap, face.vSnap = snapped.u, snapped.v
+    face.snapGridU = snapped.gridU
+    face.snapGridV = snapped.gridV
+    face.snapGridUId = snapped.gridUId
+    face.snapGridVId = snapped.gridVId
+    face.snapIndexU, face.snapIndexV = snapped.indexU, snapped.indexV
+    face.snapPercentU, face.snapPercentV = snapped.percentU, snapped.percentV
+    face.fixed = plane.fixed
+    face.corners = plane.corners
     face.center = center
+    face.origin = faceOrigin
 
-    local worldNormal = LocalToWorldPrecise(axis == 1 and VectorP(sign, 0, 0) or axis == 2 and VectorP(0, sign, 0) or VectorP(0, 0, sign), AngleP(0, 0, 0), VectorP(0, 0, 0), ent:GetAngles())
-    local worldPos = LocalToWorldPrecise(localPos, AngleP(0, 0, 0), ent:GetPos(), ent:GetAngles())
+    local worldNormal = LocalToWorldPosPrecise(axis == 1 and VectorP(sign, 0, 0) or axis == 2 and VectorP(0, sign, 0) or VectorP(0, 0, sign), ZERO_VEC, entAng)
+    local worldPos = LocalToWorldPosPrecise(localPos, entPos, entAng)
     local normal = worldNormal
 
     if settings.alt then
@@ -2082,30 +2262,12 @@ local function faceCandidate(ent, tr, settings, box)
         ent = ent,
         localPos = localPos,
         worldPos = worldPos,
-        localNormal = localNormalFromWorld(ent, worldPos, normal),
+        localNormal = geometry.localNormalFromWorld(ent, worldPos, normal),
         normal = normal,
         face = face,
         mode = settings.alt and (settings.shift and "projected_free_face" or "projected_grid")
             or settings.shift and "free_face"
             or "grid"
-    }
-end
-
-local function primitiveDrawCandidate(ent, tr, box)
-    if not IsValid(ent) or not tr or tr.Entity ~= ent or not isvector(tr.HitPos) then return end
-    if not (M.IsPrimitive and M.IsPrimitive(ent)) then return end
-    if not box or not isvector(box.mins) or not isvector(box.maxs) then return end
-
-    local localHit = WorldToLocalPrecise(tr.HitPos, AngleP(0, 0, 0), ent:GetPos(), ent:GetAngles())
-    if pointNearAABBFace(localHit, box.mins, box.maxs, PRIMITIVE_AABB_FACE_EPSILON) then return end
-
-    return {
-        ent = ent,
-        localPos = localHit,
-        worldPos = copyVec(tr.HitPos),
-        localNormal = localNormalFromWorld(ent, tr.HitPos, tr.HitNormal),
-        normal = copyVec(tr.HitNormal),
-        mode = "trace"
     }
 end
 
@@ -2242,7 +2404,7 @@ end
 local function worldToGizmoLocal(worldPos, press)
     if not isvector(worldPos) or not press then return end
 
-    local localPos = WorldToLocalPrecise(worldPos, AngleP(0, 0, 0), press.origin, press.basis)
+    local localPos = WorldToLocalPosPrecise(worldPos, press.origin, press.basis)
     return isvector(localPos) and localPos or nil
 end
 
@@ -2251,7 +2413,7 @@ local function gizmoWorldOrigin(press, currentGizmoPos)
 
     local dragStartLocal = press.dragStartLocal or press.startLocal
     local delta = currentGizmoPos - dragStartLocal
-    local worldPos = LocalToWorldPrecise(delta, AngleP(0, 0, 0), press.origin, press.basis)
+    local worldPos = LocalToWorldPosPrecise(delta, press.origin, press.basis)
 
     return isvector(worldPos) and worldPos or nil
 end
@@ -2273,8 +2435,12 @@ local function gizmoTraceDirectionForAxis(press, currentGizmoPos, key)
     return delta >= 0 and axis or -axis
 end
 
-local function gizmoTraceFilter(state)
-    local filter = {}
+local function gizmoTraceFilter(state, filter)
+    filter = filter or {}
+    for i = 1, #filter do
+        filter[i] = nil
+    end
+
     local ply = LocalPlayer()
     local weapon = IsValid(ply) and ply:GetActiveWeapon() or nil
 
@@ -2338,7 +2504,7 @@ local function traceSnapWorldPos(startPos, dir, traceLength, filter)
     end
 end
 
-local function traceSnapAxisResult(origin, dir, traceLength, filter)
+local function traceSnapAxisResult(origin, dir, traceLength, filter, out)
     if not isvector(origin) or not isvector(dir) or M.VectorLengthSqrPrecise(dir) < M.PICKING_VECTOR_EPSILON_SQR or traceLength <= 0 then return end
 
     local traceDir = normalizedVec(dir)
@@ -2363,19 +2529,20 @@ local function traceSnapAxisResult(origin, dir, traceLength, filter)
         side = "negative"
     end
 
-    return {
-        direction = traceDir,
-        positiveHit = positiveHit == true,
-        positiveWorldPos = positiveHit and copyVec(positiveWorldPos) or nil,
-        positiveTrace = positiveHit and positiveTrace or nil,
-        negativeHit = negativeHit == true,
-        negativeWorldPos = negativeHit and copyVec(negativeWorldPos) or nil,
-        negativeTrace = negativeHit and negativeTrace or nil,
-        hit = positiveHit or negativeHit,
-        worldPos = isvector(worldPos) and copyVec(worldPos) or nil,
-        side = side,
-        trace = side == "positive" and positiveTrace or side == "negative" and negativeTrace or nil
-    }
+    out = out or {}
+    out.direction = traceDir
+    out.positiveHit = positiveHit == true
+    out.positiveWorldPos = positiveHit and setVec(out.positiveWorldPos, positiveWorldPos) or nil
+    out.positiveTrace = positiveHit and positiveTrace or nil
+    out.negativeHit = negativeHit == true
+    out.negativeWorldPos = negativeHit and setVec(out.negativeWorldPos, negativeWorldPos) or nil
+    out.negativeTrace = negativeHit and negativeTrace or nil
+    out.hit = positiveHit or negativeHit
+    out.worldPos = isvector(worldPos) and setVec(out.worldPos, worldPos) or nil
+    out.side = side
+    out.trace = side == "positive" and positiveTrace or side == "negative" and negativeTrace or nil
+
+    return out
 end
 
 local function traceSnapFromGizmo(state, press, currentGizmoPos, traceLength)
@@ -2392,12 +2559,21 @@ local function traceSnapFromGizmo(state, press, currentGizmoPos, traceLength)
         return
     end
 
-    local filter = gizmoTraceFilter(state)
-    local snapped = VectorP(currentGizmoPos.x, currentGizmoPos.y, currentGizmoPos.z)
+    local filter = gizmoTraceFilter(state, press._magicAlignTraceFilter)
+    press._magicAlignTraceFilter = filter
+    local snapped = setVec(press._magicAlignTraceSnapped, currentGizmoPos)
+    press._magicAlignTraceSnapped = snapped
     local didSnap = false
-    local snappedAxes = {}
-    local traceSnapAxes = {}
-    local lastTraceSnapHit
+    local snappedAxes = press._magicAlignTraceSnappedAxes or {}
+    press._magicAlignTraceSnappedAxes = snappedAxes
+    snappedAxes.x, snappedAxes.y, snappedAxes.z = nil, nil, nil
+    local traceSnapAxes = press._magicAlignTraceSnapAxes or {}
+    press._magicAlignTraceSnapAxes = traceSnapAxes
+    traceSnapAxes.x, traceSnapAxes.y, traceSnapAxes.z = nil, nil, nil
+    local axisResults = press._magicAlignTraceAxisResults or {}
+    press._magicAlignTraceAxisResults = axisResults
+    local lastTraceSnapHit = press._magicAlignLastTraceSnapHit or {}
+    press._magicAlignLastTraceSnapHit = lastTraceSnapHit
     local function snapAxis(key)
         local direction = gizmoTraceDirectionForAxis(press, currentGizmoPos, key)
         if not isvector(direction) or M.VectorLengthSqrPrecise(direction) < M.PICKING_VECTOR_EPSILON_SQR then return end
@@ -2405,22 +2581,21 @@ local function traceSnapFromGizmo(state, press, currentGizmoPos, traceLength)
         local traceStart = traceSnapStartWorldPos(state, press, currentGizmoPos, direction)
         if not isvector(traceStart) then return end
 
-        local axisResult = traceSnapAxisResult(traceStart, direction, traceLength, filter)
+        axisResults[key] = axisResults[key] or {}
+        local axisResult = traceSnapAxisResult(traceStart, direction, traceLength, filter, axisResults[key])
         if not axisResult then return end
 
         local snapWorldPos = axisResult.worldPos
-        axisResult.start = copyVec(traceStart)
+        axisResult.start = setVec(axisResult.start, traceStart)
         traceSnapAxes[key] = axisResult
         if not isvector(snapWorldPos) then return end
 
         local snapLocalPos = worldToGizmoLocal(snapWorldPos, press)
         if not snapLocalPos then return end
 
-        lastTraceSnapHit = {
-            key = key,
-            worldPos = copyVec(snapWorldPos),
-            trace = axisResult.trace
-        }
+        lastTraceSnapHit.key = key
+        lastTraceSnapHit.worldPos = setVec(lastTraceSnapHit.worldPos, snapWorldPos)
+        lastTraceSnapHit.trace = axisResult.trace
         applyAxisSnap(snapped, key, snapLocalPos, snappedAxes)
         didSnap = true
     end
@@ -2439,7 +2614,9 @@ local function snapGizmoPosition(state, press, currentGizmoPos)
     if not press or not press.gizmo or not isvector(currentGizmoPos) then return currentGizmoPos end
 
     local translationStep = state.hover and state.hover.settings and state.hover.settings.translationSnap or 0
-    local priorityAxes = {}
+    local priorityAxes = press._magicAlignPriorityAxes or {}
+    press._magicAlignPriorityAxes = priorityAxes
+    priorityAxes.x, priorityAxes.y, priorityAxes.z = nil, nil, nil
     local function snapToTranslation(localPos)
         if not isvector(localPos) or translationStep <= 0 then return localPos end
         -- Grid-, Anchor- und Trace-Snaps duerfen die bereits festgelegten Achsen
@@ -2465,7 +2642,7 @@ local function snapGizmoPosition(state, press, currentGizmoPos)
         press.lastTraceSnapHit = nil
     end
 
-    local hoverPointIsWorld = state.hover and state.hover.point and isWorldTarget(state.hover.ent)
+    local hoverPointIsWorld = state.hover and state.hover.point and geometry.isWorldTarget(state.hover.ent)
     if not suppressShiftSnap and not hoverPointIsWorld and state.hover and state.hover.point and isvector(state.hover.point.worldPos) then
         press.traceSnapAxes = nil
         press.lastTraceSnapHit = nil
@@ -2474,7 +2651,7 @@ local function snapGizmoPosition(state, press, currentGizmoPos)
 
     local hoverCandidate = state.hover and (state.hover.candidate or state.hover.overlay)
     local traceLength = state.hover and state.hover.settings and state.hover.settings.traceSnapLength or 0
-    local hoverCandidateIsWorld = hoverCandidate and isWorldTarget(hoverCandidate.ent)
+    local hoverCandidateIsWorld = hoverCandidate and geometry.isWorldTarget(hoverCandidate.ent)
 
     if hoverCandidate and isvector(hoverCandidate.worldPos) then
         if not suppressShiftSnap and traceLength > 0 then
@@ -2507,7 +2684,7 @@ local function hoverPoint(ent, points)
     local best, bestDist
 
     for i = 1, #points do
-        local world = worldPosFromLocalPoint(ent, points[i])
+        local world = geometry.worldPosFromLocalPoint(ent, points[i])
         if isvector(world) then
             local screen = world:ToScreen()
             if screen.visible then
@@ -2594,14 +2771,14 @@ local function referenceBasisFor(space, preview, solve, prop2)
     if preview.referenceBasis and preview.referenceBasis[space] then
         return preview.referenceBasis[space]
     elseif space == "world" then
-        return AngleP(0, 0, 0)
-    elseif space == "prop2" and isWorldTarget(prop2) then
-        return AngleP(0, 0, 0)
+        return ZERO_ANG
+    elseif space == "prop2" and geometry.isWorldTarget(prop2) then
+        return ZERO_ANG
     elseif space == "prop2" and IsValid(prop2) then
         return copyAng(prop2:GetAngles())
     elseif space == "points" and solve then
         if solve.pointsLocalAng then
-            local _, worldAng = LocalToWorldPrecise(VectorP(0, 0, 0), solve.pointsLocalAng, VectorP(0, 0, 0), preview.ang)
+            local _, worldAng = LocalToWorldPrecise(ZERO_VEC, solve.pointsLocalAng, ZERO_VEC, preview.ang)
             return worldAng or preview.ang
         end
 
@@ -2619,8 +2796,158 @@ local function gizmoBasisFor(space, preview, solve, prop2)
     return referenceBasisFor(space, preview, solve, prop2)
 end
 
+local gizmoShared = client.gizmoShared or {}
+client.gizmoShared = gizmoShared
+
+local GIZMO_CONFIG = {
+    defaultSize = 32,
+    sizeScale = 0.42,
+    minSize = 18,
+    maxSize = 72,
+    planeOffsetScale = 0.2,
+    ringRadiusScale = 0.82,
+    ringPadding = 0.5,
+    pickRadiusMin = 324,
+    pickRadiusScale = 0.18
+}
+
+function gizmoShared.sizeForProp(ent)
+    return math.Clamp(
+        IsValid(ent) and ent:BoundingRadius() * GIZMO_CONFIG.sizeScale or GIZMO_CONFIG.defaultSize,
+        GIZMO_CONFIG.minSize,
+        GIZMO_CONFIG.maxSize
+    )
+end
+
+function gizmoShared.metricsForSize(size)
+    size = tonumber(size) or GIZMO_CONFIG.defaultSize
+
+    return {
+        planeOffset = size * GIZMO_CONFIG.planeOffsetScale,
+        ringRadius = size * GIZMO_CONFIG.ringRadiusScale,
+        ringPadding = GIZMO_CONFIG.ringPadding,
+        pickRadius = math.max(GIZMO_CONFIG.pickRadiusMin, size * size * GIZMO_CONFIG.pickRadiusScale)
+    }
+end
+
+function gizmoShared.linearHandles(origin, basis, size)
+    local basisForward, basisRight, basisUp = M.AngleAxesPrecise(basis)
+    local metrics = gizmoShared.metricsForSize(size)
+    local function originOffset(axis, distance)
+        return M.AddVectorsPrecise(origin, M.ScaleVectorPrecise(axis, distance))
+    end
+
+    return {
+        { kind = "move", key = "x", color = colors.x, a = origin, b = originOffset(basisForward, size) },
+        { kind = "move", key = "y", color = colors.y, a = origin, b = originOffset(basisRight, size) },
+        { kind = "move", key = "z", color = colors.z, a = origin, b = originOffset(basisUp, size) },
+        { kind = "plane", key = "xy", color = colors.xy, center = M.AddVectorsPrecise(originOffset(basisForward, metrics.planeOffset), M.ScaleVectorPrecise(basisRight, metrics.planeOffset)) },
+        { kind = "plane", key = "xz", color = colors.xz, center = M.AddVectorsPrecise(originOffset(basisForward, metrics.planeOffset), M.ScaleVectorPrecise(basisUp, metrics.planeOffset)) },
+        { kind = "plane", key = "yz", color = colors.yz, center = M.AddVectorsPrecise(originOffset(basisRight, metrics.planeOffset), M.ScaleVectorPrecise(basisUp, metrics.planeOffset)) }
+    }, basisForward, basisRight, basisUp, metrics
+end
+
+function gizmoShared.pickHoveredHandle(handles, pickRadius, ringRadius, ringPadding, origin, basis, eye, dir)
+    local x, y = ScrW() * 0.5, ScrH() * 0.5
+    local best, bestDist
+
+    local function take(item, dist)
+        if dist and dist < pickRadius and (not bestDist or dist < bestDist) then
+            best = item
+            bestDist = dist
+        end
+    end
+
+    for i = 1, #handles do
+        local item = handles[i]
+
+        if item.kind == "move" then
+            local screen = item.b:ToScreen()
+            if screen.visible then
+                take(item, (x - screen.x) ^ 2 + (y - screen.y) ^ 2)
+            end
+        elseif item.kind == "plane" then
+            local screen = item.center:ToScreen()
+            if screen.visible then
+                take(item, (x - screen.x) ^ 2 + (y - screen.y) ^ 2)
+            end
+        elseif item.kind == "rot" and isvector(eye) and isvector(dir) then
+            local _, localPos = M.LinePlaneIntersection(dir, eye, item.axis, origin, basis)
+            if localPos then
+                local u, v = ringCoords(item.key, localPos)
+                item.cursorAngle = math.deg(ringAngle(item.key, localPos))
+                local dist = math.abs(math.sqrt(u * u + v * v) - ringRadius)
+                if dist <= ringPadding then
+                    take(item, dist)
+                end
+            end
+        end
+    end
+
+    return best
+end
+
+function gizmoShared.linearDragNormal(origin, basis, item, eye)
+    if not isvector(origin) or not isangle(basis) or not istable(item) or not isvector(eye) then return end
+
+    local basisForward, basisRight, basisUp = M.AngleAxesPrecise(basis)
+    if item.kind == "move" then
+        local axis = item.key == "x" and basisForward or item.key == "y" and basisRight or basisUp
+        local toEye = normalizedVec(M.SubtractVectorsPrecise(eye, origin))
+        local normal = toEye and M.CrossVectorsPrecise(M.CrossVectorsPrecise(axis, toEye), axis) or nil
+        if not normal or M.VectorLengthSqrPrecise(normal) < M.PICKING_VECTOR_EPSILON_SQR then
+            normal = M.CrossVectorsPrecise(M.CrossVectorsPrecise(axis, VectorP(0, 0, 1)), axis)
+        end
+
+        return normalizedVec(normal)
+    elseif item.kind == "plane" then
+        local axisA = item.key == "xy" and basisForward or item.key == "xz" and basisForward or basisRight
+        local axisB = item.key == "xy" and basisRight or item.key == "xz" and basisUp or basisUp
+        local normal = M.CrossVectorsPrecise(axisA, axisB)
+        if M.DotVectorsPrecise(normal, M.SubtractVectorsPrecise(eye, origin)) < 0 then
+            normal = -normal
+        end
+
+        return normalizedVec(normal)
+    end
+end
+
+function gizmoShared.translationLocalPos(item, dragStartLocal, localPos, out)
+    if not istable(item) or not isvector(localPos) then return end
+
+    dragStartLocal = dragStartLocal or ZERO_VEC
+    local currentGizmoPos = setVec(out, dragStartLocal)
+
+    if item.kind == "move" then
+        if item.key == "x" then
+            currentGizmoPos.x = localPos.x
+        elseif item.key == "y" then
+            currentGizmoPos.y = localPos.y
+        else
+            currentGizmoPos.z = localPos.z
+        end
+    elseif item.kind == "plane" then
+        local first = item.key:sub(1, 1)
+        local second = item.key:sub(2, 2)
+
+        if first == "x" or second == "x" then
+            currentGizmoPos.x = localPos.x
+        end
+        if first == "y" or second == "y" then
+            currentGizmoPos.y = localPos.y
+        end
+        if first == "z" or second == "z" then
+            currentGizmoPos.z = localPos.z
+        end
+    else
+        return
+    end
+
+    return currentGizmoPos
+end
+
 local function gizmo(tool, state)
-    local worldPoints = worldPointsApi()
+    local worldPoints = client.WorldPoints
     if worldPoints and isfunction(worldPoints.getGizmo) then
         local worldPointGizmo = worldPoints.getGizmo(tool, state)
         if worldPointGizmo then
@@ -2636,15 +2963,10 @@ local function gizmo(tool, state)
 
     local space = tool:GetClientInfo("space")
     local press = state.press
-    local origin = LocalToWorldPrecise(preview.solve.sourceAnchorLocal, AngleP(0, 0, 0), preview.pos, preview.ang)
+    local origin = LocalToWorldPosPrecise(preview.solve.sourceAnchorLocal, preview.pos, preview.ang)
     local basis = gizmoBasisFor(space, preview, preview.solve, state.prop2)
     local referenceBasis = referenceBasisFor(space, preview, preview.solve, state.prop2)
-    local size = math.Clamp(IsValid(state.prop1) and state.prop1:BoundingRadius() * 0.42 or 32, 18, 72)
-    local planeOffset = size * 0.2
-    local ringRadius = size * 0.82
-    local pickRadius = math.max(324, size * size * 0.18)
-    local ringPadding = 0.5
-    local x, y = ScrW() * 0.5, ScrH() * 0.5
+    local size = gizmoShared.sizeForProp(state.prop1)
     local eye = LocalPlayer():GetShootPos()
     local dir = LocalPlayer():GetAimVector()
 
@@ -2654,86 +2976,165 @@ local function gizmo(tool, state)
         referenceBasis = press.referenceBasis
     end
 
-    local basisForward, basisRight, basisUp = M.AngleAxesPrecise(basis)
-    local function originOffset(axis, distance)
-        return M.AddVectorsPrecise(origin, M.ScaleVectorPrecise(axis, distance))
-    end
+    local handles, basisForward, basisRight, basisUp, metrics = gizmoShared.linearHandles(origin, basis, size)
+    handles[#handles + 1] = { kind = "rot", key = "roll", axis = basisForward, color = colors.x }
+    handles[#handles + 1] = { kind = "rot", key = "pitch", axis = basisRight, color = colors.y }
+    handles[#handles + 1] = { kind = "rot", key = "yaw", axis = basisUp, color = colors.z }
 
-    local handles = {
-        { kind = "move", key = "x", color = colors.x, a = origin, b = originOffset(basisForward, size) },
-        { kind = "move", key = "y", color = colors.y, a = origin, b = originOffset(basisRight, size) },
-        { kind = "move", key = "z", color = colors.z, a = origin, b = originOffset(basisUp, size) },
-        { kind = "plane", key = "xy", color = colors.xy, center = M.AddVectorsPrecise(originOffset(basisForward, planeOffset), M.ScaleVectorPrecise(basisRight, planeOffset)) },
-        { kind = "plane", key = "xz", color = colors.xz, center = M.AddVectorsPrecise(originOffset(basisForward, planeOffset), M.ScaleVectorPrecise(basisUp, planeOffset)) },
-        { kind = "plane", key = "yz", color = colors.yz, center = M.AddVectorsPrecise(originOffset(basisRight, planeOffset), M.ScaleVectorPrecise(basisUp, planeOffset)) },
-        { kind = "rot", key = "roll", axis = basisForward, color = colors.x },
-        { kind = "rot", key = "pitch", axis = basisRight, color = colors.y },
-        { kind = "rot", key = "yaw", axis = basisUp, color = colors.z }
-    }
-
-    local best, bestDist
-    local function take(item, dist)
-        if dist and dist < pickRadius and (not bestDist or dist < bestDist) then
-            best = item
-            bestDist = dist
-        end
-    end
-
-    for i = 1, 3 do
-        local b = handles[i].b:ToScreen()
-        if b.visible then
-            take(handles[i], (x - b.x) ^ 2 + (y - b.y) ^ 2)
-        end
-    end
-
-    for i = 4, 6 do
-        local p = handles[i].center:ToScreen()
-        if p.visible then
-            take(handles[i], (x - p.x) ^ 2 + (y - p.y) ^ 2)
-        end
-    end
-
-    for i = 7, 9 do
-        local item = handles[i]
-        local _, localPos = M.LinePlaneIntersection(dir, eye, item.axis, origin, basis)
-        if localPos then
-            local u, v = ringCoords(item.key, localPos)
-            item.cursorAngle = math.deg(ringAngle(item.key, localPos))
-            local dist = math.abs(math.sqrt(u * u + v * v) - ringRadius)
-            if dist <= ringPadding then
-                take(item, dist)
-            end
-        end
-    end
+    local best = gizmoShared.pickHoveredHandle(
+        handles,
+        metrics.pickRadius,
+        metrics.ringRadius,
+        metrics.ringPadding,
+        origin,
+        basis,
+        eye,
+        dir
+    )
 
     return {
         origin = origin,
         basis = basis,
         referenceBasis = referenceBasis,
         size = size,
-        planeOffset = planeOffset,
-        ringRadius = ringRadius,
-        ringPadding = ringPadding,
+        planeOffset = metrics.planeOffset,
+        ringRadius = metrics.ringRadius,
+        ringPadding = metrics.ringPadding,
         hover = press and press.kind == "gizmo" and press.space == space and press.gizmo or best,
         space = space
     }
+end
+
+local function clearHover(hover)
+    hover.trace = nil
+    hover.settings = nil
+    hover.gizmo = nil
+    hover.side = nil
+    hover.points = nil
+    hover.ent = nil
+    hover.point = nil
+    hover.candidate = nil
+    hover.box = nil
+    hover.pickSource = nil
+    hover.pickTarget = nil
+    hover.overlayBox = nil
+    hover.overlay = nil
+end
+
+local function markPointSnapshot(cache, prefix, points)
+    local count = #points
+    local changed = cache[prefix .. "Count"] ~= count
+    cache[prefix .. "Count"] = count
+
+    for i = 1, M.MAX_POINTS do
+        local point = points[i]
+        local base = prefix .. i
+        if isvector(point) then
+            if cache[base .. "x"] ~= point.x or cache[base .. "y"] ~= point.y or cache[base .. "z"] ~= point.z then
+                changed = true
+                cache[base .. "x"], cache[base .. "y"], cache[base .. "z"] = point.x, point.y, point.z
+            end
+
+            local normal = point.normal
+            if isvector(normal) then
+                if cache[base .. "nx"] ~= normal.x or cache[base .. "ny"] ~= normal.y or cache[base .. "nz"] ~= normal.z then
+                    changed = true
+                    cache[base .. "nx"], cache[base .. "ny"], cache[base .. "nz"] = normal.x, normal.y, normal.z
+                end
+            elseif cache[base .. "nx"] ~= nil then
+                changed = true
+                cache[base .. "nx"], cache[base .. "ny"], cache[base .. "nz"] = nil, nil, nil
+            end
+        elseif cache[base .. "x"] ~= nil then
+            changed = true
+            cache[base .. "x"], cache[base .. "y"], cache[base .. "z"] = nil, nil, nil
+            cache[base .. "nx"], cache[base .. "ny"], cache[base .. "nz"] = nil, nil, nil
+        end
+    end
+
+    return changed
+end
+
+local function markPoseSnapshot(cache, prefix, ent)
+    if not IsValid(ent) then
+        local changed = cache[prefix .. "Ent"] ~= ent
+        cache[prefix .. "Ent"] = ent
+        return changed
+    end
+
+    local pos = ent:GetPos()
+    local ang = ent:GetAngles()
+    local changed = cache[prefix .. "Ent"] ~= ent
+        or cache[prefix .. "px"] ~= pos.x or cache[prefix .. "py"] ~= pos.y or cache[prefix .. "pz"] ~= pos.z
+        or cache[prefix .. "ap"] ~= ang.p or cache[prefix .. "ay"] ~= ang.y or cache[prefix .. "ar"] ~= ang.r
+
+    cache[prefix .. "Ent"] = ent
+    cache[prefix .. "px"], cache[prefix .. "py"], cache[prefix .. "pz"] = pos.x, pos.y, pos.z
+    cache[prefix .. "ap"], cache[prefix .. "ay"], cache[prefix .. "ar"] = ang.p, ang.y, ang.r
+
+    return changed
+end
+
+local function markLinkedSnapshot(cache, state)
+    local linked = state.linked or {}
+    local changed = cache.linkedCount ~= #linked
+    cache.linkedCount = #linked
+
+    for i = 1, #linked do
+        if markPoseSnapshot(cache, "linked" .. i, linked[i]) then
+            changed = true
+        end
+    end
+
+    local staleIndex = #linked + 1
+    while cache["linked" .. staleIndex .. "Ent"] ~= nil do
+        changed = true
+        cache["linked" .. staleIndex .. "Ent"] = nil
+        staleIndex = staleIndex + 1
+    end
+
+    return changed
+end
+
+local function previewInputsChanged(state, cache, offsetRevision, sourceAnchorRevision, targetAnchorRevision, sourceAnchorId, sourcePriority, targetAnchorId, targetPriority)
+    local changed = false
+
+    if markPoseSnapshot(cache, "prop1", state.prop1) then changed = true end
+    if markPoseSnapshot(cache, "prop2", state.prop2) then changed = true end
+    if markPointSnapshot(cache, "source", state.source) then changed = true end
+    if markPointSnapshot(cache, "target", state.target) then changed = true end
+    if markLinkedSnapshot(cache, state) then changed = true end
+
+    if cache.offsetRevision ~= offsetRevision then cache.offsetRevision = offsetRevision; changed = true end
+    if cache.sourceAnchorRevision ~= sourceAnchorRevision then cache.sourceAnchorRevision = sourceAnchorRevision; changed = true end
+    if cache.targetAnchorRevision ~= targetAnchorRevision then cache.targetAnchorRevision = targetAnchorRevision; changed = true end
+    if cache.sourceAnchorId ~= sourceAnchorId then cache.sourceAnchorId = sourceAnchorId; changed = true end
+    if cache.targetAnchorId ~= targetAnchorId then cache.targetAnchorId = targetAnchorId; changed = true end
+    if cache.sourcePriority ~= sourcePriority then cache.sourcePriority = sourcePriority; changed = true end
+    if cache.targetPriority ~= targetPriority then cache.targetPriority = targetPriority; changed = true end
+
+    return changed
 end
 
 local function solvePreview(tool, state)
     if not IsValid(state.prop1) then
         state.preview = nil
         state.pending = nil
+        state._magicAlignPreviewCache = nil
         return
     end
 
-    local sourceAnchorOptions = M.AnchorOptionsFromReader(function(name)
-        return tool:GetClientInfo(name)
-    end, "from")
-    local targetAnchorOptions = M.AnchorOptionsFromReader(function(name)
-        return tool:GetClientInfo(name)
-    end, "to")
+    local sourceAnchorOptions, sourceAnchorRevision = cachedAnchorOptions(tool, state, "from")
+    local targetAnchorOptions, targetAnchorRevision = cachedAnchorOptions(tool, state, "to")
+    local offsetTable, offsetRevision = cachedOffsets(tool, state)
     local sourceAnchorId, sourcePriority = selectedAnchorState(tool, state, "from")
     local targetAnchorId, targetPriority = selectedAnchorState(tool, state, "to")
+    local cache = state._magicAlignPreviewCache or {}
+    state._magicAlignPreviewCache = cache
+
+    if state.preview and not previewInputsChanged(state, cache, offsetRevision, sourceAnchorRevision, targetAnchorRevision, sourceAnchorId, sourcePriority, targetAnchorId, targetPriority) then
+        return
+    end
 
     local solve = M.Solve(
         state.prop1,
@@ -2754,9 +3155,11 @@ local function solvePreview(tool, state)
         return
     end
 
-    local rawPos, rawAng, spaceBasis, referenceBasis = M.ComposePose(solve, offsets(tool), state.prop2)
+    local rawPos, rawAng, spaceBasis, referenceBasis = M.ComposePose(solve, offsetTable, state.prop2)
     local pos, ang = rawPos, rawAng
-    local linkedPreview = {}
+    local preview = state.preview or {}
+    local linkedPreview = preview.linked or {}
+    local linkedCount = 0
     local sourcePos = copyVec(state.prop1:GetPos())
     local sourceAng = copyAng(state.prop1:GetAngles())
 
@@ -2765,25 +3168,32 @@ local function solvePreview(tool, state)
         if IsValid(ent) and ent ~= state.prop1 and ent ~= state.prop2 and M.IsProp(ent) then
             local worldPos, worldAng = M.TransformPoseRelativePrecise(ent:GetPos(), ent:GetAngles(), sourcePos, sourceAng, pos, ang)
             if isvector(worldPos) and isangle(worldAng) then
-                linkedPreview[#linkedPreview + 1] = {
-                    ent = ent,
-                    pos = worldPos,
-                    ang = worldAng
-                }
+                linkedCount = linkedCount + 1
+                local entry = linkedPreview[linkedCount]
+                if not istable(entry) then
+                    entry = {}
+                    linkedPreview[linkedCount] = entry
+                end
+                entry.ent = ent
+                entry.pos = worldPos
+                entry.ang = worldAng
             end
         end
     end
+    for i = linkedCount + 1, #linkedPreview do
+        linkedPreview[i] = nil
+    end
 
-    state.preview = {
-        solve = solve,
-        pos = pos,
-        ang = ang,
-        spaceBasis = spaceBasis,
-        referenceBasis = referenceBasis,
-        basePos = rawPos,
-        baseAng = rawAng,
-        linked = linkedPreview
-    }
+    preview.solve = solve
+    preview.pos = pos
+    preview.ang = ang
+    preview.spaceBasis = spaceBasis
+    preview.referenceBasis = referenceBasis
+    preview.basePos = rawPos
+    preview.baseAng = rawAng
+    preview.linked = linkedPreview
+    state.preview = preview
+    previewInputsChanged(state, cache, offsetRevision, sourceAnchorRevision, targetAnchorRevision, sourceAnchorId, sourcePriority, targetAnchorId, targetPriority)
 end
 
 local function ensureGhost(state)
@@ -2792,12 +3202,12 @@ local function ensureGhost(state)
         return
     end
 
-    if setCompatGhost(state, state.prop1, state.preview.pos, state.preview.ang, ghostAlpha, false) then
+    if compatGhosts.set(state, state.prop1, state.preview.pos, state.preview.ang, ghostAlpha, false) then
         if IsValid(state.ghost) then
             state.ghost:SetNoDraw(true)
         end
     else
-        clearCompatGhost(state)
+        compatGhosts.clear(state)
 
         local model = state.prop1:GetModel()
         state.ghost = ensureGhostModel(state.ghost, model)
@@ -2806,19 +3216,23 @@ local function ensureGhost(state)
         applyGhostAppearance(state.ghost, state.prop1, state.preview.pos, state.preview.ang, ghostAlpha)
     end
 
-    local activeLinked = {}
+    local activeLinked = state._magicAlignActiveLinked or {}
+    state._magicAlignActiveLinked = activeLinked
+    for ent in pairs(activeLinked) do
+        activeLinked[ent] = nil
+    end
     for i = 1, #(state.preview.linked or {}) do
         local preview = state.preview.linked[i]
         if IsValid(preview.ent) then
             activeLinked[preview.ent] = true
 
-            if setCompatGhost(state, preview.ent, preview.pos, preview.ang, linkedGhostAlpha, true) then
+            if compatGhosts.set(state, preview.ent, preview.pos, preview.ang, linkedGhostAlpha, true) then
                 local ghost = state.linkedGhosts[preview.ent]
                 if IsValid(ghost) then
                     ghost:SetNoDraw(true)
                 end
             else
-                clearCompatGhost(state, preview.ent)
+                compatGhosts.clear(state, preview.ent)
 
                 local ghost = ensureGhostModel(state.linkedGhosts[preview.ent], preview.ent:GetModel())
                 state.linkedGhosts[preview.ent] = ghost
@@ -2845,7 +3259,7 @@ local function ensureGhost(state)
     if istable(compatLinked) then
         for ent in pairs(compatLinked) do
             if not activeLinked[ent] then
-                clearCompatGhost(state, ent)
+                compatGhosts.clear(state, ent)
             end
         end
     end
@@ -2853,8 +3267,14 @@ end
 
 local function hoverState(tool, state)
     local tr = LocalPlayer():GetEyeTrace()
-    local settings = cfg(tool)
-    local hover = { trace = tr, settings = settings }
+    local settings = cfg(tool, state._magicAlignHoverSettings or {})
+    state._magicAlignHoverSettings = settings
+
+    local hover = state._magicAlignHover or {}
+    state._magicAlignHover = hover
+    clearHover(hover)
+    hover.trace = tr
+    hover.settings = settings
     local side, ent, points = editable(state, tr.Entity, tr)
 
     if IsValid(state.prop1) then requestBounds(state, state.prop1) end
@@ -2869,11 +3289,11 @@ local function hoverState(tool, state)
         hover.points = points
         hover.ent = ent
 
-        if traceMatchesEntity(tr, ent) then
+        if geometry.traceMatchesEntity(tr, ent) then
             hover.point = hoverPoint(ent, points)
 
-            if isWorldTarget(ent) then
-                hover.candidate = traceCandidate(ent, tr)
+            if geometry.isWorldTarget(ent) then
+                hover.candidate = geometry.traceCandidate(ent, tr)
             else
                 hover.box = boundsFor(state, ent)
                 hover.candidate = faceCandidate(ent, tr, settings, hover.box)
@@ -2883,10 +3303,10 @@ local function hoverState(tool, state)
 
     if not IsValid(state.prop1) and M.IsProp(tr.Entity) then
         hover.pickSource = tr.Entity
-    elseif not hasTargetEntity(state.prop2)
+    elseif not geometry.hasTargetEntity(state.prop2)
         and #state.source > 0
         and ((M.IsProp(tr.Entity) and tr.Entity ~= state.prop1 and not isLinkedProp(state, tr.Entity))
-            or (settings.worldTarget and traceHitsWorld(tr))) then
+            or (settings.worldTarget and geometry.traceHitsWorld(tr))) then
         hover.pickTarget = M.IsProp(tr.Entity) and tr.Entity or M.WORLD_TARGET
     end
 
@@ -2894,11 +3314,33 @@ local function hoverState(tool, state)
         requestBounds(state, tr.Entity)
         hover.overlayBox = boundsFor(state, tr.Entity)
         hover.overlay = faceCandidate(tr.Entity, tr, settings, hover.overlayBox)
-    elseif not hover.candidate and not hover.overlay and settings.worldTarget and traceHitsWorld(tr) and not hasTargetEntity(state.prop2) and #state.source > 0 then
-        hover.overlay = traceCandidate(M.WORLD_TARGET, tr)
+    elseif not hover.candidate and not hover.overlay and settings.worldTarget and geometry.traceHitsWorld(tr) and not geometry.hasTargetEntity(state.prop2) and #state.source > 0 then
+        hover.overlay = geometry.traceCandidate(M.WORLD_TARGET, tr)
     end
 
     return hover
+end
+
+local function pointFromCandidateInto(candidate, out)
+    if not istable(candidate) or not isvector(candidate.localPos) then return end
+
+    out = setVec(out, candidate.localPos)
+    if not out then return end
+
+    local localNormal = normalizedVec(candidate.localNormal)
+    if not localNormal and isvector(candidate.normal) then
+        local worldPos = isvector(candidate.worldPos) and candidate.worldPos or geometry.worldPosFromLocalPoint(candidate.ent, candidate.localPos)
+        localNormal = geometry.localNormalFromWorld(candidate.ent, worldPos, candidate.normal)
+    end
+
+    if localNormal then
+        out.normal = setVec(out.normal, localNormal)
+    else
+        out.normal = nil
+    end
+
+    out.world = geometry.isWorldTarget(candidate.ent) or nil
+    return out
 end
 
 local function pendingPreview(tool, state)
@@ -2908,15 +3350,24 @@ local function pendingPreview(tool, state)
         return
     end
 
-    local points = M.CopyPoints(state.target)
-    points[#points + 1] = pointFromCandidate(state.hover.candidate)
+    local points = state._magicAlignPendingPoints or {}
+    state._magicAlignPendingPoints = points
 
-    local sourceAnchorOptions = M.AnchorOptionsFromReader(function(name)
-        return tool:GetClientInfo(name)
-    end, "from")
-    local targetAnchorOptions = M.AnchorOptionsFromReader(function(name)
-        return tool:GetClientInfo(name)
-    end, "to")
+    local targetCount = #state.target
+    for i = 1, targetCount do
+        points[i] = state.target[i]
+    end
+
+    local pendingPoint = pointFromCandidateInto(state.hover.candidate, points[targetCount + 1])
+    if not pendingPoint then return end
+    points[targetCount + 1] = pendingPoint
+    for i = targetCount + 2, #points do
+        points[i] = nil
+    end
+
+    local sourceAnchorOptions = cachedAnchorOptions(tool, state, "from")
+    local targetAnchorOptions = cachedAnchorOptions(tool, state, "to")
+    local offsetTable = cachedOffsets(tool, state)
     local sourceAnchorId, sourcePriority = selectedAnchorState(tool, state, "from")
     local targetAnchorId, targetPriority = selectedAnchorState(tool, state, "to")
 
@@ -2934,14 +3385,15 @@ local function pendingPreview(tool, state)
     )
 
     if solve then
-        local rawPos, rawAng, spaceBasis, referenceBasis = M.ComposePose(solve, offsets(tool), state.prop2)
-        state.pending = {
-            solve = solve,
-            pos = rawPos,
-            ang = rawAng,
-            spaceBasis = spaceBasis,
-            referenceBasis = referenceBasis
-        }
+        local rawPos, rawAng, spaceBasis, referenceBasis = M.ComposePose(solve, offsetTable, state.prop2)
+        local pending = state._magicAlignPendingPreview or {}
+        state._magicAlignPendingPreview = pending
+        pending.solve = solve
+        pending.pos = rawPos
+        pending.ang = rawAng
+        pending.spaceBasis = spaceBasis
+        pending.referenceBasis = referenceBasis
+        state.pending = pending
     end
 end
 
@@ -3084,12 +3536,12 @@ local function commit(tool, state)
 
     beginCommitUpload(tool, {
         prop1 = state.prop1,
-        prop2 = isWorldTarget(state.prop2) and nil or state.prop2,
+        prop2 = geometry.isWorldTarget(state.prop2) and nil or state.prop2,
         toolEnt = LocalPlayer():GetActiveWeapon(),
         pos = state.preview.pos,
         ang = state.preview.ang,
         source = M.CopyPoints(state.source),
-        target = isWorldTarget(state.prop2) and {} or M.CopyPoints(state.target),
+        target = geometry.isWorldTarget(state.prop2) and {} or M.CopyPoints(state.target),
         linked = linked,
         weld = weldOnCommit,
         nocollide = nocollideOnCommit,
@@ -3102,7 +3554,7 @@ local function useCandidate(state, side, candidate, index)
     if not candidate then return end
 
     local points = side == "source" and state.source or state.target
-    local point = pointFromCandidate(candidate)
+    local point = geometry.pointFromCandidate(candidate)
     if not point then return end
 
     if index then
@@ -3114,22 +3566,6 @@ local function useCandidate(state, side, candidate, index)
     M.RefreshState(state)
 end
 
-function traceCandidate(ent, tr)
-    if not hasTargetEntity(ent) or not tr or not traceMatchesEntity(tr, ent) or not isvector(tr.HitPos) then return end
-
-    local localPos = localPointFromWorldPos(ent, tr.HitPos)
-    if not isvector(localPos) then return end
-
-    return {
-        ent = ent,
-        localPos = localPos,
-        worldPos = copyVec(tr.HitPos),
-        localNormal = localNormalFromWorld(ent, tr.HitPos, tr.HitNormal),
-        normal = copyVec(tr.HitNormal),
-        mode = "trace"
-    }
-end
-
 local function hoverPickCandidate(hover)
     local candidate = hover and (hover.candidate or hover.overlay) or nil
     if not istable(candidate) then return end
@@ -3138,8 +3574,8 @@ local function hoverPickCandidate(hover)
 end
 
 local function drawPressCandidate(kind, ent, hover)
-    if not hasTargetEntity(ent) or not hover or not hover.trace then return end
-    return traceCandidate(ent, hover.trace)
+    if not geometry.hasTargetEntity(ent) or not hover or not hover.trace then return end
+    return geometry.traceCandidate(ent, hover.trace)
 end
 
 local function pickCandidateForPress(press, hover)
@@ -3160,7 +3596,7 @@ local function pickCandidateForPress(press, hover)
 end
 
 local function beginPickPress(kind, side, ent, hover)
-    if not hasTargetEntity(ent) or not hover or not hover.trace then return end
+    if not geometry.hasTargetEntity(ent) or not hover or not hover.trace then return end
 
     local clickCandidate = hoverPickCandidate(hover)
     if clickCandidate and clickCandidate.ent ~= ent then
@@ -3190,28 +3626,16 @@ local function beginGizmoDrag(tool, state, handle)
     if not handle or not handle.hover then return end
 
     local ply = LocalPlayer()
+    if not IsValid(ply) then return end
+
     local eye = ply:GetShootPos()
     local dir = ply:GetAimVector()
     local origin = handle.origin
     local basis = handle.basis
     local item = handle.hover
-    local normal = item.axis
-    local basisForward, basisRight, basisUp = M.AngleAxesPrecise(basis)
-
-    if item.kind == "move" then
-        local axis = item.key == "x" and basisForward or item.key == "y" and basisRight or basisUp
-        local toEye = normalizedVec(M.SubtractVectorsPrecise(eye, origin))
-        normal = toEye and M.CrossVectorsPrecise(M.CrossVectorsPrecise(axis, toEye), axis) or nil
-        if not normal or M.VectorLengthSqrPrecise(normal) < M.PICKING_VECTOR_EPSILON_SQR then
-            normal = M.CrossVectorsPrecise(M.CrossVectorsPrecise(axis, VectorP(0, 0, 1)), axis)
-        end
-    elseif item.kind == "plane" then
-        local a = item.key == "xy" and basisForward or item.key == "xz" and basisForward or basisRight
-        local b = item.key == "xy" and basisRight or item.key == "xz" and basisUp or basisUp
-        normal = M.CrossVectorsPrecise(a, b)
-        if M.DotVectorsPrecise(normal, M.SubtractVectorsPrecise(eye, origin)) < 0 then normal = -normal end
-    end
-
+    local normal = ((item.kind == "move" or item.kind == "plane")
+        and gizmoShared.linearDragNormal(origin, basis, item, eye)
+        or item.axis)
     normal = normalizedVec(normal)
     if not normal then return end
 
@@ -3258,8 +3682,8 @@ local function setReferencePositionFromGizmoCoords(press, startGizmoPos, current
     -- `LocalToLocal` ist hier fuer Koordinaten gedacht, nicht fuer einen schon
     -- vorher gebildeten Delta-Vektor. Deshalb rechnen wir Start- und Zielpunkt
     -- erst getrennt vom Gizmo-Raum in den Referenzraum und bilden das Delta dort.
-    local startRef = M.LocalToLocal(startGizmoPos, AngleP(0, 0, 0), VectorP(0, 0, 0), press.basis, VectorP(0, 0, 0), press.referenceBasis)
-    local currentRef = M.LocalToLocal(currentGizmoPos, AngleP(0, 0, 0), VectorP(0, 0, 0), press.basis, VectorP(0, 0, 0), press.referenceBasis)
+    local startRef = M.LocalToLocal(startGizmoPos, ZERO_ANG, ZERO_VEC, press.basis, ZERO_VEC, press.referenceBasis)
+    local currentRef = M.LocalToLocal(currentGizmoPos, ZERO_ANG, ZERO_VEC, press.basis, ZERO_VEC, press.referenceBasis)
     if not isvector(startRef) or not isvector(currentRef) then return end
 
     local deltaRef = currentRef - startRef
@@ -3268,7 +3692,7 @@ local function setReferencePositionFromGizmoCoords(press, startGizmoPos, current
     setValue(press.space, "py", press.start.y + deltaRef.y)
     setValue(press.space, "pz", press.start.z + deltaRef.z)
 
-    return deltaRef
+    return setVec(press.referenceDelta, deltaRef)
 end
 
 local function updateGizmo(tool, state)
@@ -3283,38 +3707,15 @@ local function updateGizmo(tool, state)
     local dragStartLocal = press.dragStartLocal or press.startLocal
 
     if press.gizmo.kind == "move" then
-        local key = press.gizmo.key
-        local currentGizmoPos = VectorP(dragStartLocal.x, dragStartLocal.y, dragStartLocal.z)
-
-        if key == "x" then
-            currentGizmoPos.x = localPos.x
-        elseif key == "y" then
-            currentGizmoPos.y = localPos.y
-        else
-            currentGizmoPos.z = localPos.z
-        end
-
+        local currentGizmoPos = gizmoShared.translationLocalPos(press.gizmo, dragStartLocal, localPos, press.currentGizmoPos)
         currentGizmoPos = snapGizmoPosition(state, press, currentGizmoPos)
-        press.currentGizmoPos = copyVec(currentGizmoPos)
+        press.currentGizmoPos = setVec(press.currentGizmoPos, currentGizmoPos)
         press.referenceDelta = setReferencePositionFromGizmoCoords(press, dragStartLocal, currentGizmoPos) or press.referenceDelta
         press.rotationDelta = 0
     elseif press.gizmo.kind == "plane" then
-        local first = press.gizmo.key:sub(1, 1)
-        local second = press.gizmo.key:sub(2, 2)
-        local currentGizmoPos = VectorP(dragStartLocal.x, dragStartLocal.y, dragStartLocal.z)
-
-        if first == "x" or second == "x" then
-            currentGizmoPos.x = localPos.x
-        end
-        if first == "y" or second == "y" then
-            currentGizmoPos.y = localPos.y
-        end
-        if first == "z" or second == "z" then
-            currentGizmoPos.z = localPos.z
-        end
-
+        local currentGizmoPos = gizmoShared.translationLocalPos(press.gizmo, dragStartLocal, localPos, press.currentGizmoPos)
         currentGizmoPos = snapGizmoPosition(state, press, currentGizmoPos)
-        press.currentGizmoPos = copyVec(currentGizmoPos)
+        press.currentGizmoPos = setVec(press.currentGizmoPos, currentGizmoPos)
         press.referenceDelta = setReferencePositionFromGizmoCoords(press, dragStartLocal, currentGizmoPos) or press.referenceDelta
         press.rotationDelta = 0
     else
@@ -3335,29 +3736,15 @@ local function updateGizmo(tool, state)
         local axis = axisVectorForKey(press.basis, press.gizmo.key == "roll" and "x" or press.gizmo.key == "pitch" and "y" or "z")
         local newBasis = M.RotateAngleAroundAxisPrecise(press.basis, axis, delta)
 
-        local _, newLocalRot = WorldToLocalPrecise(VectorP(0, 0, 0), newBasis, VectorP(0, 0, 0), copyAng(press.referenceBasis))
+        local _, newLocalRot = WorldToLocalPrecise(ZERO_VEC, newBasis, ZERO_VEC, press.referenceBasis)
         if not isangle(newLocalRot) then return end
 
         setValue(press.space, "pitch", newLocalRot.p)
         setValue(press.space, "yaw", newLocalRot.y)
         setValue(press.space, "roll", newLocalRot.r)
         press.currentGizmoPos = nil
-        press.referenceDelta = VectorP(0, 0, 0)
+        press.referenceDelta = setVec(press.referenceDelta, ZERO_VEC)
         press.rotationDelta = delta
-    end
-end
-
-local function drawFrame(pos, ang, size, alpha)
-    render.DrawLine(toVector(pos), toVector(pos + ang:Forward() * size), Color(colors.x.r, colors.x.g, colors.x.b, alpha), true)
-    render.DrawLine(toVector(pos), toVector(pos + ang:Right() * size), Color(colors.y.r, colors.y.g, colors.y.b, alpha), true)
-    render.DrawLine(toVector(pos), toVector(pos + ang:Up() * size), Color(colors.z.r, colors.z.g, colors.z.b, alpha), true)
-end
-
-local function drawRing(origin, a, b, radius, color)
-    for step = 0, 31 do
-        local p1 = origin + (a * math.cos(math.rad(step * 11.25)) + b * math.sin(math.rad(step * 11.25))) * radius
-        local p2 = origin + (a * math.cos(math.rad((step + 1) * 11.25)) + b * math.sin(math.rad((step + 1) * 11.25))) * radius
-        render.DrawLine(toVector(p1), toVector(p2), color, true)
     end
 end
 
@@ -3564,89 +3951,210 @@ local function addFormulaCrossAnchorDistanceVariables(env, leftLabel, rightLabel
 end
 
 local function formulaEntitySignature(ent)
-    if isWorldTarget(ent) then
+    if geometry.isWorldTarget(ent) then
         return "world"
     end
 
     return IsValid(ent) and tostring(ent:EntIndex()) or "0"
 end
 
-local client = M.Client or {}
-M.Client = client
-client.spaceLabels = SPACE_LABELS
+client.spaceLabels = TOOL_UI.spaceLabels
 client.colors = colors
-client.ringQualityPresets = RING_QUALITY_PRESETS
-client.defaultRingQualityIndex = DEFAULT_RING_QUALITY_INDEX
+client.ringQualityPresets = RENDER_QUALITY.presets
+client.defaultRingQualityIndex = RENDER_QUALITY.defaultIndex
 client.activeTool = activeTool
 client.setValue = setValue
 client.gizmo = gizmo
 client.snapGizmoPosition = snapGizmoPosition
-client.drawFrame = drawFrame
-client.drawRing = drawRing
-client.rotationSnapDivisors = ROTATION_SNAP_DIVISORS
-client.defaultRotationSnapIndex = DEFAULT_ROTATION_SNAP_INDEX
-    client.rotationSnapDivisions = rotationSnapDivisions
-    client.rotationSnapStep = rotationSnapStep
-    client.translationSnapStep = translationSnapStep
-    client.rotationSnapMaxVisibleTicks = MAX_VISIBLE_ROTATION_TICKS
-    client.isMajorRotationTick = isMajorRotationTick
-    client.sampleWorldPos = sampleWorldPos
-    client.validateState = validateClientState
-    client.getFormulaEnvironment = function()
-        local currentState = ensureStateShape(M.ClientState)
-        cleanupLinkedProps(currentState)
-        local tool = select(1, activeTool())
-        local sourceAnchorOptions = M.AnchorOptionsFromReader(function(name)
-            return tool and tool:GetClientInfo(name)
-        end, "from")
-        local targetAnchorOptions = M.AnchorOptionsFromReader(function(name)
-            return tool and tool:GetClientInfo(name)
-        end, "to")
+client.rotationSnapDivisors = ROTATION_CONFIG.snapDivisors
+client.defaultRotationSnapIndex = ROTATION_CONFIG.defaultSnapIndex
+client.rotationSnapDivisions = rotationSnapDivisions
+client.rotationSnapStep = rotationSnapStep
+client.translationSnapStep = translationSnapStep
+client.rotationSnapMaxVisibleTicks = ROTATION_CONFIG.maxVisibleTicks
+client.isMajorRotationTick = isMajorRotationTick
+client.sampleWorldPos = sampleWorldPos
+client.validateState = validateClientState
+client.getFormulaEnvironment = function()
+    local currentState = ensureStateShape(M.ClientState)
+    cleanupLinkedProps(currentState)
+    local tool = select(1, activeTool())
+    local sourceAnchorOptions = M.AnchorOptionsFromReader(function(name)
+        return tool and tool:GetClientInfo(name)
+    end, "from")
+    local targetAnchorOptions = M.AnchorOptionsFromReader(function(name)
+        return tool and tool:GetClientInfo(name)
+    end, "to")
 
-        local env = {
-            variables = {},
-            variableNames = {},
-            variableDescriptions = {},
-            variableRows = {}
-        }
+    local env = {
+        variables = {},
+        variableNames = {},
+        variableDescriptions = {},
+        variableRows = {}
+    }
 
-        addFormulaConstants(env)
-        addFormulaEntityVariables(env, currentState, "prop1", "Prop 1", currentState.prop1)
-        addFormulaEntityVariables(env, currentState, "prop2", "Prop 2", currentState.prop2)
-        addFormulaAnchorDistanceVariables(env, "prop1", "Prop 1", currentState.source, sourceAnchorOptions)
-        addFormulaAnchorAngleVariables(env, "prop1", "Prop 1", currentState.source, sourceAnchorOptions)
-        addFormulaAnchorDistanceVariables(env, "prop2", "Prop 2", currentState.target, targetAnchorOptions)
-        addFormulaAnchorAngleVariables(env, "prop2", "Prop 2", currentState.target, targetAnchorOptions)
-        addFormulaCrossAnchorDistanceVariables(
-            env,
-            "Prop 1",
-            "Prop 2",
-            currentState.source,
-            sourceAnchorOptions,
-            currentState.target,
-            targetAnchorOptions
-        )
+    addFormulaConstants(env)
+    addFormulaEntityVariables(env, currentState, "prop1", "Prop 1", currentState.prop1)
+    addFormulaEntityVariables(env, currentState, "prop2", "Prop 2", currentState.prop2)
+    addFormulaAnchorDistanceVariables(env, "prop1", "Prop 1", currentState.source, sourceAnchorOptions)
+    addFormulaAnchorAngleVariables(env, "prop1", "Prop 1", currentState.source, sourceAnchorOptions)
+    addFormulaAnchorDistanceVariables(env, "prop2", "Prop 2", currentState.target, targetAnchorOptions)
+    addFormulaAnchorAngleVariables(env, "prop2", "Prop 2", currentState.target, targetAnchorOptions)
+    addFormulaCrossAnchorDistanceVariables(
+        env,
+        "Prop 1",
+        "Prop 2",
+        currentState.source,
+        sourceAnchorOptions,
+        currentState.target,
+        targetAnchorOptions
+    )
 
-        local linkedSignatures = {}
-        local linkedCount = 0
-        for index = 1, #(currentState.linked or {}) do
-            local ent = currentState.linked[index]
-            if IsValid(ent) and ent ~= currentState.prop1 and ent ~= currentState.prop2 and M.IsProp(ent) then
-                linkedCount = linkedCount + 1
-                linkedSignatures[#linkedSignatures + 1] = formulaEntitySignature(ent)
-                addFormulaEntityVariables(env, currentState, ("linked%d"):format(linkedCount), ("Linked %d"):format(linkedCount), ent)
+    local linkedSignatures = {}
+    local linkedCount = 0
+    for index = 1, #(currentState.linked or {}) do
+        local ent = currentState.linked[index]
+        if IsValid(ent) and ent ~= currentState.prop1 and ent ~= currentState.prop2 and M.IsProp(ent) then
+            linkedCount = linkedCount + 1
+            linkedSignatures[#linkedSignatures + 1] = formulaEntitySignature(ent)
+            addFormulaEntityVariables(env, currentState, ("linked%d"):format(linkedCount), ("Linked %d"):format(linkedCount), ent)
+        end
+    end
+
+    addFormulaVariable(env, "linked_count", linkedCount, "Number of currently linked props")
+    env.watchKey = table.concat({
+        "prop1=" .. formulaEntitySignature(currentState.prop1),
+        "prop2=" .. formulaEntitySignature(currentState.prop2),
+        "linked=" .. table.concat(linkedSignatures, ",")
+    }, ";")
+
+    return env
+end
+
+local pressState = {}
+
+function pressState.updatePick(state)
+    local tr = state.hover.trace
+    local samples = state.press.samples
+    local last = samples[#samples]
+    local clickCandidate = hoverPickCandidate(state.hover)
+    if clickCandidate and clickCandidate.ent == state.press.ent then
+        state.press.clickCandidate = clickCandidate
+    end
+
+    local lastWorldPos = sampleWorldPos(state.press.ent, last)
+    if not isvector(lastWorldPos) or lastWorldPos:DistToSqr(tr.HitPos) > 1 then
+        local sample = buildTraceSample(state.press.ent, tr.HitPos, tr.HitNormal, tr)
+        if sample then
+            samples[#samples + 1] = sample
+
+            local sampleWorld = sampleWorldPos(state.press.ent, sample)
+            if isvector(lastWorldPos) and isvector(sampleWorld) then
+                state.press.drawDistance = (tonumber(state.press.drawDistance) or 0) + lastWorldPos:Distance(sampleWorld)
             end
         end
-
-        addFormulaVariable(env, "linked_count", linkedCount, "Number of currently linked props")
-        env.watchKey = table.concat({
-            "prop1=" .. formulaEntitySignature(currentState.prop1),
-            "prop2=" .. formulaEntitySignature(currentState.prop2),
-            "linked=" .. table.concat(linkedSignatures, ",")
-        }, ";")
-
-        return env
     end
+
+    state.press.drawActive = (tonumber(state.press.drawDistance) or 0) >= PICK_CONFIG.drawSelectDeadzone
+
+    local candidate = pickCandidateForPress(state.press, state.hover)
+    if candidate then
+        state.press.currentCandidate = candidate
+    end
+
+    state.press.aggregatedProbes = aggregateTraceProbes(samples)
+    state.corner = cornerCandidate(
+        state.press.ent,
+        samples,
+        PICK_CONFIG.cornerTraceMinLength,
+        boundsFor(state, state.press.ent),
+        state.press.aggregatedProbes
+    )
+end
+
+function pressState.updateActive(tool, state, worldPoints)
+    if worldPoints and isfunction(worldPoints.updateActivePress) and worldPoints.updateActivePress(tool, state) then
+        return
+    end
+
+    if state.press and state.press.kind == "drag_point" and state.hover.candidate and state.hover.side == state.press.side then
+        useCandidate(state, state.press.side, state.hover.candidate, state.press.index)
+    elseif state.press
+        and (state.press.kind == "pick" or state.press.kind == "select_source_pick" or state.press.kind == "select_target_pick")
+        and geometry.traceMatchesEntity(state.hover.trace, state.press.ent) then
+        pressState.updatePick(state)
+    elseif state.press and state.press.kind == "gizmo" then
+        updateGizmo(tool, state)
+    else
+        state.corner = nil
+    end
+end
+
+function pressState.beginMouse(tool, state, worldPoints)
+    if worldPoints and isfunction(worldPoints.beginMousePress) and worldPoints.beginMousePress(tool, state) then
+        return
+    end
+
+    if state.hover.gizmo and state.hover.gizmo.hover then
+        beginGizmoDrag(tool, state, state.hover.gizmo)
+    elseif state.hover.point and state.hover.side then
+        state.press = {
+            kind = "drag_point",
+            side = state.hover.side,
+            index = state.hover.point.index
+        }
+    elseif state.hover.side and state.hover.ent and state.hover.trace and geometry.traceMatchesEntity(state.hover.trace, state.hover.ent) then
+        state.press = beginPickPress("pick", state.hover.side, state.hover.ent, state.hover)
+    elseif state.hover.pickSource then
+        state.press = beginPickPress("select_source_pick", "source", state.hover.pickSource, state.hover)
+    elseif state.hover.pickTarget then
+        state.press = beginPickPress("select_target_pick", "target", state.hover.pickTarget, state.hover)
+    end
+end
+
+function pressState.finalCandidate(state, press)
+    if press.drawActive then
+        return state.corner or press.currentCandidate or press.clickCandidate
+    end
+
+    return press.clickCandidate or press.currentCandidate
+end
+
+function pressState.applyCompletedPick(state, press, finalCandidate)
+    if press.kind == "select_source_pick" and M.IsProp(press.ent) then
+        state.prop1 = press.ent
+        state.prop2 = nil
+        resetLinkedProps(state)
+        state.source = {}
+        state.target = {}
+        requestBounds(state, state.prop1)
+        useCandidate(state, "source", finalCandidate)
+    elseif press.kind == "select_target_pick" and (M.IsProp(press.ent) or geometry.isWorldTarget(press.ent)) and press.ent ~= state.prop1 then
+        removeLinkedProp(state, press.ent)
+        state.prop2 = press.ent
+        state.target = {}
+        if IsValid(state.prop2) then
+            requestBounds(state, state.prop2)
+        end
+        useCandidate(state, "target", finalCandidate)
+    elseif press.kind == "pick" then
+        useCandidate(state, press.side, finalCandidate)
+    end
+end
+
+function pressState.finishMouse(tool, state, worldPoints)
+    local press = state.press
+    local handledWorldPointRelease = worldPoints
+        and isfunction(worldPoints.handleMouseRelease)
+        and worldPoints.handleMouseRelease(tool, state, press)
+
+    if press and not handledWorldPointRelease then
+        pressState.applyCompletedPick(state, press, pressState.finalCandidate(state, press))
+    end
+
+    state.press = nil
+    state.corner = nil
+end
 
 hook.Add("EntityRemoved", "magic_align_reset_session_on_prop_remove", function(ent)
     local state = M.ClientState
@@ -3667,61 +4175,13 @@ function TOOL:Think()
 
     cleanupLinkedProps(state)
     M.RefreshState(state)
-    local worldPoints = worldPointsApi()
+    local worldPoints = client.WorldPoints
     if worldPoints and isfunction(worldPoints.sanitizeState) then
         worldPoints.sanitizeState(state)
     end
     refreshPreferredAnchors(self, state)
     state.hover = hoverState(self, state)
-
-    if worldPoints and isfunction(worldPoints.updateActivePress) and worldPoints.updateActivePress(self, state) then
-    elseif state.press and state.press.kind == "drag_point" and state.hover.candidate and state.hover.side == state.press.side then
-        useCandidate(state, state.press.side, state.hover.candidate, state.press.index)
-    elseif state.press
-        and (state.press.kind == "pick" or state.press.kind == "select_source_pick" or state.press.kind == "select_target_pick")
-        and traceMatchesEntity(state.hover.trace, state.press.ent) then
-        local tr = state.hover.trace
-        local samples = state.press.samples
-        local last = samples[#samples]
-        local clickCandidate = hoverPickCandidate(state.hover)
-        if clickCandidate and clickCandidate.ent == state.press.ent then
-            state.press.clickCandidate = clickCandidate
-        end
-
-        local lastWorldPos = sampleWorldPos(state.press.ent, last)
-        if not isvector(lastWorldPos) or lastWorldPos:DistToSqr(tr.HitPos) > 1 then
-            local sample = buildTraceSample(state.press.ent, tr.HitPos, tr.HitNormal, tr)
-            if sample then
-                samples[#samples + 1] = sample
-
-                local sampleWorld = sampleWorldPos(state.press.ent, sample)
-                if isvector(lastWorldPos) and isvector(sampleWorld) then
-                    state.press.drawDistance = (tonumber(state.press.drawDistance) or 0) + lastWorldPos:Distance(sampleWorld)
-                end
-            end
-        end
-
-        state.press.drawActive = (tonumber(state.press.drawDistance) or 0) >= DRAW_SELECT_DEADZONE
-
-        local candidate = pickCandidateForPress(state.press, state.hover)
-        if candidate then
-            state.press.currentCandidate = candidate
-        end
-
-        state.press.aggregatedProbes = aggregateTraceProbes(samples)
-
-        state.corner = cornerCandidate(
-            state.press.ent,
-            samples,
-            CORNER_TRACE_MIN_LENGTH,
-            boundsFor(state, state.press.ent),
-            state.press.aggregatedProbes
-        )
-    elseif state.press and state.press.kind == "gizmo" then
-        updateGizmo(self, state)
-    else
-        state.corner = nil
-    end
+    pressState.updateActive(self, state, worldPoints)
 
     solvePreview(self, state)
     pendingPreview(self, state)
@@ -3744,60 +4204,9 @@ function TOOL:Think()
     end
 
     if attack and not state.attackDown then
-        if worldPoints and isfunction(worldPoints.beginMousePress) and worldPoints.beginMousePress(self, state) then
-        elseif state.hover.gizmo and state.hover.gizmo.hover then
-            beginGizmoDrag(self, state, state.hover.gizmo)
-        elseif state.hover.point and state.hover.side then
-            state.press = {
-                kind = "drag_point",
-                side = state.hover.side,
-                index = state.hover.point.index
-            }
-        elseif state.hover.side and state.hover.ent and state.hover.trace and traceMatchesEntity(state.hover.trace, state.hover.ent) then
-            state.press = beginPickPress("pick", state.hover.side, state.hover.ent, state.hover)
-        elseif state.hover.pickSource then
-            state.press = beginPickPress("select_source_pick", "source", state.hover.pickSource, state.hover)
-        elseif state.hover.pickTarget then
-            state.press = beginPickPress("select_target_pick", "target", state.hover.pickTarget, state.hover)
-        end
+        pressState.beginMouse(self, state, worldPoints)
     elseif not attack and state.attackDown then
-        local press = state.press
-        local handledWorldPointRelease = worldPoints
-            and isfunction(worldPoints.handleMouseRelease)
-            and worldPoints.handleMouseRelease(self, state, press)
-
-        if press and not handledWorldPointRelease then
-            local finalCandidate
-
-            if press.drawActive then
-                finalCandidate = state.corner or press.currentCandidate or press.clickCandidate
-            else
-                finalCandidate = press.clickCandidate or press.currentCandidate
-            end
-
-            if press.kind == "select_source_pick" and M.IsProp(press.ent) then
-                state.prop1 = press.ent
-                state.prop2 = nil
-                resetLinkedProps(state)
-                state.source = {}
-                state.target = {}
-                requestBounds(state, state.prop1)
-                useCandidate(state, "source", finalCandidate)
-            elseif press.kind == "select_target_pick" and (M.IsProp(press.ent) or isWorldTarget(press.ent)) and press.ent ~= state.prop1 then
-                removeLinkedProp(state, press.ent)
-                state.prop2 = press.ent
-                state.target = {}
-                if IsValid(state.prop2) then
-                    requestBounds(state, state.prop2)
-                end
-                useCandidate(state, "target", finalCandidate)
-            elseif press.kind == "pick" then
-                useCandidate(state, press.side, finalCandidate)
-            end
-        end
-
-        state.press = nil
-        state.corner = nil
+        pressState.finishMouse(self, state, worldPoints)
     end
 
     state.attackDown = attack
@@ -3807,6 +4216,7 @@ function TOOL:Think()
     state.useDown = use
 end
 
+include("magic_align/client/geometry.lua")
 include("magic_align/client/world_points.lua")
 include("magic_align/client/render.lua")
 include("magic_align/client/menu.lua")

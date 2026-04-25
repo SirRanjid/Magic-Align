@@ -325,6 +325,14 @@ local function parseScaleVector(value)
     return VectorP(vec.x, vec.y, vec.z)
 end
 
+function M.VectorApprox(a, b, eps)
+    return vectorApprox(a, b, eps)
+end
+
+function M.ParseScaleVector(value)
+    return parseScaleVector(value)
+end
+
 local function modifierScale(data, firstIndex)
     if not istable(data) then return end
 
@@ -348,7 +356,15 @@ local function findSizeHandler(ent)
     end
 end
 
-local function advResizerBoundsScale(ent)
+function M.FindSizeHandler(ent)
+    return findSizeHandler(ent)
+end
+
+function M.GetEntityModelScale(ent)
+    return math.max(tonumber(IsValid(ent) and ent:GetModelScale() or 1) or 1, M.MODEL_SCALE_EPSILON)
+end
+
+function M.GetAdvResizerScales(ent)
     if not IsValid(ent) then return end
 
     local modifierData = istable(ent.EntityMods) and ent.EntityMods.advr or nil
@@ -376,6 +392,20 @@ local function advResizerBoundsScale(ent)
         visual = VectorP(1, 1, 1)
     end
 
+    return physical, visual
+end
+
+function M.GetAdvResizerVisualScale(ent)
+    local _, visual = M.GetAdvResizerScales(ent)
+    if not isvector(visual) or vectorApprox(visual, SCALE_IDENTITY) then return end
+
+    return visual
+end
+
+local function advResizerBoundsScale(ent)
+    local physical, visual = M.GetAdvResizerScales(ent)
+    if not isvector(physical) or not isvector(visual) then return end
+
     local ratio = VectorP(
         visual.x / math.max(physical.x, M.MODEL_SCALE_EPSILON),
         visual.y / math.max(physical.y, M.MODEL_SCALE_EPSILON),
@@ -385,6 +415,10 @@ local function advResizerBoundsScale(ent)
     if vectorApprox(ratio, SCALE_IDENTITY) then return end
 
     return ratio
+end
+
+function M.GetAdvResizerBoundsScale(ent)
+    return advResizerBoundsScale(ent)
 end
 
 local function scaleBounds(mins, maxs, scale)
@@ -401,7 +435,7 @@ end
 function M.GetLocalBounds(ent)
     if not M.IsProp(ent) then return end
 
-    local visualScale = advResizerBoundsScale(ent)
+    local visualScale = M.GetAdvResizerBoundsScale(ent)
 
     local phys = ent:GetPhysicsObject()
     local mins, maxs = physAABBToLocalBounds(ent, phys)
@@ -451,13 +485,8 @@ function M.ModeName(sourceCount, targetCount, hasTarget)
     return ("%dx%d"):format(sourceCount, targetCount)
 end
 
-local function copyVec(v)
-    return M.CopyVectorPrecise(v)
-end
-
-local function copyAng(a)
-    return M.CopyAnglePrecise(a)
-end
+local copyVec = M.CopyVectorPrecise
+local copyAng = M.CopyAnglePrecise
 
 local function localToWorldSafe(localPos, localAng, originPos, originAng)
     return LocalToWorldPrecise(

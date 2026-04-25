@@ -108,6 +108,16 @@ end
 
 function Manager:Touch(entry)
     entry.revision = (tonumber(entry.revision) or 0) + 1
+    self.revision = (tonumber(self.revision) or 0) + 1
+end
+
+function Manager:GetRevision()
+    return tonumber(self.revision) or 0
+end
+
+function Manager:GetEntryRevision(cvarName)
+    local entry = self.entries and self.entries[cvarName]
+    return entry and (tonumber(entry.revision) or 0) or 0
 end
 
 function Manager:GetCookieKey(cvarName)
@@ -679,6 +689,19 @@ function Manager:GetSnapshot(cvarName)
         validationState = entry.validationState or "ok",
         validationMessage = entry.validationMessage
     }
+end
+
+function Manager:GetNumericValue(cvarName, fallback)
+    local entry = self.entries and self.entries[cvarName]
+    if not entry then
+        return fallback
+    end
+
+    if entry.rawMode == "formula" and entry.storedNumericValue ~= nil then
+        return tonumber(entry.currentValue) or tonumber(entry.storedNumericValue) or fallback
+    end
+
+    return fallback
 end
 
 M.FormulaManager = Manager

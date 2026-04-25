@@ -535,6 +535,44 @@ local function transformVector(matrix, vec)
     )
 end
 
+local function localToWorldPosition(localPos, originPos, originAng)
+    localPos = vecOrZero(localPos)
+    originPos = vecOrZero(originPos)
+    originAng = angOrZero(originAng)
+
+    local x, y, z = numberOrZero(localPos.x), numberOrZero(localPos.y), numberOrZero(localPos.z)
+    local sp, sy, sr = math.sin(originAng.p * DEG_TO_RAD), math.sin(originAng.y * DEG_TO_RAD), math.sin(originAng.r * DEG_TO_RAD)
+    local cp, cy, cr = math.cos(originAng.p * DEG_TO_RAD), math.cos(originAng.y * DEG_TO_RAD), math.cos(originAng.r * DEG_TO_RAD)
+
+    return VectorP(
+        numberOrZero(originPos.x) + (cp * cy) * x + (sp * sr * cy - cr * sy) * y + (sp * cr * cy + sr * sy) * z,
+        numberOrZero(originPos.y) + (cp * sy) * x + (sp * sr * sy + cr * cy) * y + (sp * cr * sy - sr * cy) * z,
+        numberOrZero(originPos.z) + (-sp) * x + (sr * cp) * y + (cr * cp) * z
+    )
+end
+
+local function worldToLocalPosition(worldPos, originPos, originAng)
+    worldPos = vecOrZero(worldPos)
+    originPos = vecOrZero(originPos)
+    originAng = angOrZero(originAng)
+
+    local x = numberOrZero(worldPos.x) - numberOrZero(originPos.x)
+    local y = numberOrZero(worldPos.y) - numberOrZero(originPos.y)
+    local z = numberOrZero(worldPos.z) - numberOrZero(originPos.z)
+    local sp, sy, sr = math.sin(originAng.p * DEG_TO_RAD), math.sin(originAng.y * DEG_TO_RAD), math.sin(originAng.r * DEG_TO_RAD)
+    local cp, cy, cr = math.cos(originAng.p * DEG_TO_RAD), math.cos(originAng.y * DEG_TO_RAD), math.cos(originAng.r * DEG_TO_RAD)
+
+    local m11, m12, m13 = cp * cy, sp * sr * cy - cr * sy, sp * cr * cy + sr * sy
+    local m21, m22, m23 = cp * sy, sp * sr * sy + cr * cy, sp * cr * sy - sr * cy
+    local m31, m32, m33 = -sp, sr * cp, cr * cp
+
+    return VectorP(
+        m11 * x + m21 * y + m31 * z,
+        m12 * x + m22 * y + m32 * z,
+        m13 * x + m23 * y + m33 * z
+    )
+end
+
 local function inverseTransformVector(matrix, vec)
     vec = vecOrZero(vec)
     local x, y, z = numberOrZero(vec.x), numberOrZero(vec.y), numberOrZero(vec.z)
@@ -715,6 +753,14 @@ function M.LocalToWorldPrecise(localPos, localAng, originPos, originAng)
     local ang = matrixAngle(multiplyMatrix(originMatrix, localMatrix))
 
     return pos, ang
+end
+
+function M.LocalToWorldPosPrecise(localPos, originPos, originAng)
+    return localToWorldPosition(localPos, originPos, originAng)
+end
+
+function M.WorldToLocalPosPrecise(worldPos, originPos, originAng)
+    return worldToLocalPosition(worldPos, originPos, originAng)
 end
 
 function M.WorldToLocalPrecise(worldPos, worldAng, originPos, originAng)

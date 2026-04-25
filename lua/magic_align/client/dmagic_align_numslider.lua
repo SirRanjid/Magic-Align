@@ -1360,40 +1360,28 @@ function PANEL:RestoreTextAreaFocusAfterEditorClose()
     end)
 end
 
-function PANEL:OpenExpressionEditor()
-    self:EnsureRuntimeState()
-    ensureEditorFonts()
-
-    closeOtherExpressionEditors(self.EditorFrame)
-
-    local editorParent = resolveTextAreaFloatParent(self) or vgui.GetWorldPanel()
-
-    local activeFrame = M.ActiveExpressionEditorFrame
-    if IsValid(activeFrame) and activeFrame ~= self.EditorFrame then
-        activeFrame:Remove()
+local function focusExistingExpressionEditor(panel)
+    if not IsValid(panel.EditorFrame) then
+        return false
     end
 
-    if IsValid(self.EditorFrame) and self.EditorFrame:GetParent() ~= editorParent then
-        self.EditorFrame:Remove()
+    panel.EditorFrame:MakePopup()
+    panel.EditorFrame:MoveToFront()
+    if isfunction(panel.EditorFrame.MagicAlignRefreshHeader) then
+        panel.EditorFrame:MagicAlignRefreshHeader()
     end
-
-    if IsValid(self.EditorFrame) then
-        self.EditorFrame:MakePopup()
-        self.EditorFrame:MoveToFront()
-        if isfunction(self.EditorFrame.MagicAlignRefreshHeader) then
-            self.EditorFrame:MagicAlignRefreshHeader()
-        end
-        if IsValid(self.EditorEntry) then
-            self.EditorEntry:RequestFocus()
-            self.EditorEntry:SetCaretPos(#self.EditorEntry:GetText())
-        end
-        M.ActiveExpressionEditorFrame = self.EditorFrame
-        M.ActiveExpressionEditorOwner = self
-        self.editorNextRefreshAt = 0
-        self:RefreshEditorInfo(true)
-        return
+    if IsValid(panel.EditorEntry) then
+        panel.EditorEntry:RequestFocus()
+        panel.EditorEntry:SetCaretPos(#panel.EditorEntry:GetText())
     end
+    M.ActiveExpressionEditorFrame = panel.EditorFrame
+    M.ActiveExpressionEditorOwner = panel
+    panel.editorNextRefreshAt = 0
+    panel:RefreshEditorInfo(true)
+    return true
+end
 
+local function createExpressionEditorFrame(panel, editorParent)
     local frame = vgui.Create("DFrame", editorParent)
     frame.MagicAlignExpressionEditor = true
     frame:SetTitle("")
@@ -1446,33 +1434,33 @@ function PANEL:OpenExpressionEditor()
         end
     end
     frame.OnRemove = function(editorFrame)
-        local text = IsValid(self.EditorEntry) and self.EditorEntry:GetText() or nil
-        self.EditorFrame = nil
-        self.EditorEntry = nil
-        self.EditorFunctionsLabel = nil
-        self.EditorVariableFiltersPanel = nil
-        self.EditorVariableSearchEntry = nil
-        self.EditorShowNaCheckBox = nil
-        self.EditorShowWorldCheckBox = nil
-        self.EditorShowPointDistancesCheckBox = nil
-        self.EditorShowPointAnglesCheckBox = nil
-        self.EditorVariableNameHeader = nil
-        self.EditorVariableValueHeader = nil
-        self.EditorVariablesScroll = nil
-        self.EditorVariablesEmptyLabel = nil
-        self.EditorVariableRows = {}
-        self.editorSyncing = false
-        self.editorInfoSignature = nil
-        self.editorNextRefreshAt = 0
+        local text = IsValid(panel.EditorEntry) and panel.EditorEntry:GetText() or nil
+        panel.EditorFrame = nil
+        panel.EditorEntry = nil
+        panel.EditorFunctionsLabel = nil
+        panel.EditorVariableFiltersPanel = nil
+        panel.EditorVariableSearchEntry = nil
+        panel.EditorShowNaCheckBox = nil
+        panel.EditorShowWorldCheckBox = nil
+        panel.EditorShowPointDistancesCheckBox = nil
+        panel.EditorShowPointAnglesCheckBox = nil
+        panel.EditorVariableNameHeader = nil
+        panel.EditorVariableValueHeader = nil
+        panel.EditorVariablesScroll = nil
+        panel.EditorVariablesEmptyLabel = nil
+        panel.EditorVariableRows = {}
+        panel.editorSyncing = false
+        panel.editorInfoSignature = nil
+        panel.editorNextRefreshAt = 0
 
         if M.ActiveExpressionEditorFrame == editorFrame then
             M.ActiveExpressionEditorFrame = nil
             M.ActiveExpressionEditorOwner = nil
         end
 
-        if IsValid(self) and text ~= nil then
-            self:CommitText(text)
-            self:RestoreTextAreaFocusAfterEditorClose()
+        if IsValid(panel) and text ~= nil then
+            panel:CommitText(text)
+            panel:RestoreTextAreaFocusAfterEditorClose()
         end
     end
     frame.PerformLayout = function(editorFrame, w, h)
@@ -1574,20 +1562,20 @@ function PANEL:OpenExpressionEditor()
         end
     end
     frame.Think = function(editorFrame)
-        if not IsValid(self) then
+        if not IsValid(panel) then
             editorFrame:Remove()
             return
         end
 
         if M.ActiveExpressionEditorFrame ~= editorFrame then
             M.ActiveExpressionEditorFrame = editorFrame
-            M.ActiveExpressionEditorOwner = self
+            M.ActiveExpressionEditorOwner = panel
         end
 
         local now = RealTime()
-        if now >= (tonumber(self.editorNextRefreshAt) or 0) then
-            self.editorNextRefreshAt = now + EDITOR_REFRESH_INTERVAL
-            self:RefreshEditorInfo()
+        if now >= (tonumber(panel.editorNextRefreshAt) or 0) then
+            panel.editorNextRefreshAt = now + EDITOR_REFRESH_INTERVAL
+            panel:RefreshEditorInfo()
         end
 
         if now - (tonumber(editorFrame.MagicAlignOpenedAt) or now) < 0.15 then
@@ -1603,7 +1591,7 @@ function PANEL:OpenExpressionEditor()
 
         editorFrame.MagicAlignFocusLostAt = editorFrame.MagicAlignFocusLostAt or now
         if now - editorFrame.MagicAlignFocusLostAt >= 0.12 then
-            self:RestoreTextAreaFocusAfterEditorClose()
+            panel:RestoreTextAreaFocusAfterEditorClose()
             editorFrame:Close()
         end
     end
@@ -1616,7 +1604,7 @@ function PANEL:OpenExpressionEditor()
     frame.TitleLabel = titleLabel
 
     frame.MagicAlignRefreshHeader = function(editorFrame)
-        local label = string.Trim(tostring(self:GetText() or ""))
+        local label = string.Trim(tostring(panel:GetText() or ""))
         if label == "" then
             label = "Expression"
         end
@@ -1626,6 +1614,139 @@ function PANEL:OpenExpressionEditor()
         end
     end
     frame:MagicAlignRefreshHeader()
+
+    return frame
+end
+
+local function buildExpressionEditorFilterPanel(panel, frame, variablesCard)
+    local filterPanel = vgui.Create("DPanel", variablesCard)
+    filterPanel.Paint = nil
+    filterPanel.PerformLayout = function(filterRow, w, h)
+        local gap = 8
+        local searchTall = 24
+        local checkTall = 18
+        local rowOneY = searchTall + 4
+        local rowTwoY = rowOneY + checkTall + 4
+        local halfWidth = math.floor((w - gap) * 0.5)
+
+        if IsValid(filterRow.SearchEntry) then
+            filterRow.SearchEntry:SetPos(0, 0)
+            filterRow.SearchEntry:SetSize(w, searchTall)
+        end
+
+        if IsValid(filterRow.ShowNaCheckBox) then
+            filterRow.ShowNaCheckBox:SetPos(0, rowOneY)
+            filterRow.ShowNaCheckBox:SetSize(halfWidth, checkTall)
+        end
+
+        if IsValid(filterRow.ShowWorldCheckBox) then
+            filterRow.ShowWorldCheckBox:SetPos(halfWidth + gap, rowOneY)
+            filterRow.ShowWorldCheckBox:SetSize(w - halfWidth - gap, checkTall)
+        end
+
+        if IsValid(filterRow.ShowPointDistancesCheckBox) then
+            filterRow.ShowPointDistancesCheckBox:SetPos(0, rowTwoY)
+            filterRow.ShowPointDistancesCheckBox:SetSize(halfWidth, checkTall)
+        end
+
+        if IsValid(filterRow.ShowPointAnglesCheckBox) then
+            filterRow.ShowPointAnglesCheckBox:SetPos(halfWidth + gap, rowTwoY)
+            filterRow.ShowPointAnglesCheckBox:SetSize(w - halfWidth - gap, checkTall)
+        end
+    end
+    frame.VariableFiltersPanel = filterPanel
+    panel.EditorVariableFiltersPanel = filterPanel
+
+    local searchEntry = vgui.Create("DTextEntry", filterPanel)
+    searchEntry:SetFont("MagicAlignEditorBody")
+    searchEntry:SetNumeric(false)
+    searchEntry:SetMultiline(false)
+    searchEntry:SetPaintBackground(false)
+    searchEntry:SetDrawLanguageID(false)
+    searchEntry:SetUpdateOnType(false)
+    searchEntry:SetTextInset(5, 0)
+    searchEntry:SetPlaceholderText("Search variables")
+    searchEntry.Paint = function(textarea, w, h)
+        paintEditorEntry(textarea, w, h, false)
+    end
+    searchEntry.OnChange = function()
+        panel.editorInfoSignature = nil
+        panel:RefreshEditorInfo(true)
+    end
+    filterPanel.SearchEntry = searchEntry
+    panel.EditorVariableSearchEntry = searchEntry
+
+    local showNaCheckBox = vgui.Create("DCheckBoxLabel", filterPanel)
+    showNaCheckBox:SetText("Show N/A")
+    showNaCheckBox:SetValue(cookie.GetString(EDITOR_COOKIE_SHOW_NA, "1") ~= "0" and 1 or 0)
+    showNaCheckBox.OnChange = function(_, checked)
+        cookie.Set(EDITOR_COOKIE_SHOW_NA, checked and "1" or "0")
+        panel.editorInfoSignature = nil
+        panel:RefreshEditorInfo(true)
+    end
+    styleEditorCheckBox(showNaCheckBox)
+    filterPanel.ShowNaCheckBox = showNaCheckBox
+    panel.EditorShowNaCheckBox = showNaCheckBox
+
+    local showWorldCheckBox = vgui.Create("DCheckBoxLabel", filterPanel)
+    showWorldCheckBox:SetText("Show world variables")
+    showWorldCheckBox:SetValue(cookie.GetString(EDITOR_COOKIE_SHOW_WORLD, "0") == "1" and 1 or 0)
+    showWorldCheckBox.OnChange = function(_, checked)
+        cookie.Set(EDITOR_COOKIE_SHOW_WORLD, checked and "1" or "0")
+        panel.editorInfoSignature = nil
+        panel:RefreshEditorInfo(true)
+    end
+    styleEditorCheckBox(showWorldCheckBox)
+    filterPanel.ShowWorldCheckBox = showWorldCheckBox
+    panel.EditorShowWorldCheckBox = showWorldCheckBox
+
+    local showPointDistancesCheckBox = vgui.Create("DCheckBoxLabel", filterPanel)
+    showPointDistancesCheckBox:SetText("Show Point Distances")
+    showPointDistancesCheckBox:SetValue(cookie.GetString(EDITOR_COOKIE_SHOW_POINT_DISTANCES, "1") ~= "0" and 1 or 0)
+    showPointDistancesCheckBox.OnChange = function(_, checked)
+        cookie.Set(EDITOR_COOKIE_SHOW_POINT_DISTANCES, checked and "1" or "0")
+        panel.editorInfoSignature = nil
+        panel:RefreshEditorInfo(true)
+    end
+    styleEditorCheckBox(showPointDistancesCheckBox)
+    filterPanel.ShowPointDistancesCheckBox = showPointDistancesCheckBox
+    panel.EditorShowPointDistancesCheckBox = showPointDistancesCheckBox
+
+    local showPointAnglesCheckBox = vgui.Create("DCheckBoxLabel", filterPanel)
+    showPointAnglesCheckBox:SetText("Show Point Angles")
+    showPointAnglesCheckBox:SetValue(cookie.GetString(EDITOR_COOKIE_SHOW_POINT_ANGLES, "1") ~= "0" and 1 or 0)
+    showPointAnglesCheckBox.OnChange = function(_, checked)
+        cookie.Set(EDITOR_COOKIE_SHOW_POINT_ANGLES, checked and "1" or "0")
+        panel.editorInfoSignature = nil
+        panel:RefreshEditorInfo(true)
+    end
+    styleEditorCheckBox(showPointAnglesCheckBox)
+    filterPanel.ShowPointAnglesCheckBox = showPointAnglesCheckBox
+    panel.EditorShowPointAnglesCheckBox = showPointAnglesCheckBox
+end
+
+function PANEL:OpenExpressionEditor()
+    self:EnsureRuntimeState()
+    ensureEditorFonts()
+
+    closeOtherExpressionEditors(self.EditorFrame)
+
+    local editorParent = resolveTextAreaFloatParent(self) or vgui.GetWorldPanel()
+
+    local activeFrame = M.ActiveExpressionEditorFrame
+    if IsValid(activeFrame) and activeFrame ~= self.EditorFrame then
+        activeFrame:Remove()
+    end
+
+    if IsValid(self.EditorFrame) and self.EditorFrame:GetParent() ~= editorParent then
+        self.EditorFrame:Remove()
+    end
+
+    if focusExistingExpressionEditor(self) then
+        return
+    end
+
+    local frame = createExpressionEditorFrame(self, editorParent)
 
     local entryCard = createEditorCard(frame, "card")
     frame.EntryCard = entryCard
@@ -1682,110 +1803,7 @@ function PANEL:OpenExpressionEditor()
     variablesTitle:SetTextColor(getEditorPalette().text)
     frame.VariablesTitle = variablesTitle
 
-    local filterPanel = vgui.Create("DPanel", variablesCard)
-    filterPanel.Paint = nil
-    filterPanel.PerformLayout = function(filterRow, w, h)
-        local gap = 8
-        local searchTall = 24
-        local checkTall = 18
-        local rowOneY = searchTall + 4
-        local rowTwoY = rowOneY + checkTall + 4
-        local halfWidth = math.floor((w - gap) * 0.5)
-
-        if IsValid(filterRow.SearchEntry) then
-            filterRow.SearchEntry:SetPos(0, 0)
-            filterRow.SearchEntry:SetSize(w, searchTall)
-        end
-
-        if IsValid(filterRow.ShowNaCheckBox) then
-            filterRow.ShowNaCheckBox:SetPos(0, rowOneY)
-            filterRow.ShowNaCheckBox:SetSize(halfWidth, checkTall)
-        end
-
-        if IsValid(filterRow.ShowWorldCheckBox) then
-            filterRow.ShowWorldCheckBox:SetPos(halfWidth + gap, rowOneY)
-            filterRow.ShowWorldCheckBox:SetSize(w - halfWidth - gap, checkTall)
-        end
-
-        if IsValid(filterRow.ShowPointDistancesCheckBox) then
-            filterRow.ShowPointDistancesCheckBox:SetPos(0, rowTwoY)
-            filterRow.ShowPointDistancesCheckBox:SetSize(halfWidth, checkTall)
-        end
-
-        if IsValid(filterRow.ShowPointAnglesCheckBox) then
-            filterRow.ShowPointAnglesCheckBox:SetPos(halfWidth + gap, rowTwoY)
-            filterRow.ShowPointAnglesCheckBox:SetSize(w - halfWidth - gap, checkTall)
-        end
-    end
-    frame.VariableFiltersPanel = filterPanel
-    self.EditorVariableFiltersPanel = filterPanel
-
-    local searchEntry = vgui.Create("DTextEntry", filterPanel)
-    searchEntry:SetFont("MagicAlignEditorBody")
-    searchEntry:SetNumeric(false)
-    searchEntry:SetMultiline(false)
-    searchEntry:SetPaintBackground(false)
-    searchEntry:SetDrawLanguageID(false)
-    searchEntry:SetUpdateOnType(false)
-    searchEntry:SetTextInset(5, 0)
-    searchEntry:SetPlaceholderText("Search variables")
-    searchEntry.Paint = function(textarea, w, h)
-        paintEditorEntry(textarea, w, h, false)
-    end
-    searchEntry.OnChange = function()
-        self.editorInfoSignature = nil
-        self:RefreshEditorInfo(true)
-    end
-    filterPanel.SearchEntry = searchEntry
-    self.EditorVariableSearchEntry = searchEntry
-
-    local showNaCheckBox = vgui.Create("DCheckBoxLabel", filterPanel)
-    showNaCheckBox:SetText("Show N/A")
-    showNaCheckBox:SetValue(cookie.GetString(EDITOR_COOKIE_SHOW_NA, "1") ~= "0" and 1 or 0)
-    showNaCheckBox.OnChange = function(_, checked)
-        cookie.Set(EDITOR_COOKIE_SHOW_NA, checked and "1" or "0")
-        self.editorInfoSignature = nil
-        self:RefreshEditorInfo(true)
-    end
-    styleEditorCheckBox(showNaCheckBox)
-    filterPanel.ShowNaCheckBox = showNaCheckBox
-    self.EditorShowNaCheckBox = showNaCheckBox
-
-    local showWorldCheckBox = vgui.Create("DCheckBoxLabel", filterPanel)
-    showWorldCheckBox:SetText("Show world variables")
-    showWorldCheckBox:SetValue(cookie.GetString(EDITOR_COOKIE_SHOW_WORLD, "0") == "1" and 1 or 0)
-    showWorldCheckBox.OnChange = function(_, checked)
-        cookie.Set(EDITOR_COOKIE_SHOW_WORLD, checked and "1" or "0")
-        self.editorInfoSignature = nil
-        self:RefreshEditorInfo(true)
-    end
-    styleEditorCheckBox(showWorldCheckBox)
-    filterPanel.ShowWorldCheckBox = showWorldCheckBox
-    self.EditorShowWorldCheckBox = showWorldCheckBox
-
-    local showPointDistancesCheckBox = vgui.Create("DCheckBoxLabel", filterPanel)
-    showPointDistancesCheckBox:SetText("Show Point Distances")
-    showPointDistancesCheckBox:SetValue(cookie.GetString(EDITOR_COOKIE_SHOW_POINT_DISTANCES, "1") ~= "0" and 1 or 0)
-    showPointDistancesCheckBox.OnChange = function(_, checked)
-        cookie.Set(EDITOR_COOKIE_SHOW_POINT_DISTANCES, checked and "1" or "0")
-        self.editorInfoSignature = nil
-        self:RefreshEditorInfo(true)
-    end
-    styleEditorCheckBox(showPointDistancesCheckBox)
-    filterPanel.ShowPointDistancesCheckBox = showPointDistancesCheckBox
-    self.EditorShowPointDistancesCheckBox = showPointDistancesCheckBox
-
-    local showPointAnglesCheckBox = vgui.Create("DCheckBoxLabel", filterPanel)
-    showPointAnglesCheckBox:SetText("Show Point Angles")
-    showPointAnglesCheckBox:SetValue(cookie.GetString(EDITOR_COOKIE_SHOW_POINT_ANGLES, "1") ~= "0" and 1 or 0)
-    showPointAnglesCheckBox.OnChange = function(_, checked)
-        cookie.Set(EDITOR_COOKIE_SHOW_POINT_ANGLES, checked and "1" or "0")
-        self.editorInfoSignature = nil
-        self:RefreshEditorInfo(true)
-    end
-    styleEditorCheckBox(showPointAnglesCheckBox)
-    filterPanel.ShowPointAnglesCheckBox = showPointAnglesCheckBox
-    self.EditorShowPointAnglesCheckBox = showPointAnglesCheckBox
+    buildExpressionEditorFilterPanel(self, frame, variablesCard)
 
     local variableNameHeader = vgui.Create("DLabel", variablesCard)
     variableNameHeader:SetFont("MagicAlignEditorCaption")

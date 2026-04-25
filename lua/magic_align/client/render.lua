@@ -5,69 +5,98 @@ local VectorP = M.VectorP
 local AngleP = M.AngleP
 local isvector = M.IsVectorLike
 local isangle = M.IsAngleLike
-local isWorldTarget = M.IsWorldTarget
 local toVector = M.ToVector
 local toAngle = M.ToAngle
+local LocalToWorldPosPrecise = M.LocalToWorldPosPrecise
 local client = M.Client or {}
+M.Client = client
 local colors = client.colors or {}
-local activeTool = client.activeTool
-local validateState = client.validateState
-local gizmo = client.gizmo
-local drawFrame = client.drawFrame
-local rotationSnapDivisions = client.rotationSnapDivisions
-local rotationSnapStep = client.rotationSnapStep
-local translationSnapStep = client.translationSnapStep
-local rotationSnapMaxVisibleTicks = client.rotationSnapMaxVisibleTicks or 20
-local isMajorRotationTick = client.isMajorRotationTick
-local sampleWorldPos = client.sampleWorldPos
-local ringQualityPresets = client.ringQualityPresets
-local defaultRingQualityIndex = client.defaultRingQualityIndex or 2
-
-local BILLBOARD_SCALE = 0.035
-local BILLBOARD_PUSH = 0.15
-local CIRCLE_SEGMENTS = 40
-local RING_QUALITY_CVAR = "magic_align_ring_quality"
-local SHAPE_CACHE_NAME = "magic_align_shape"
-local SHAPE_CACHE_REBUILD_HOOK = "magic_align_shape_rebuild"
-local SHAPE_CACHE_REBUILD_CALLBACK = "magic_align_shape_quality"
-local SHAPE_CACHE_MATERIAL_FLAGS = bit.bor(16, 32, 128, 2048, 2097152)
-local SHAPE_RT_PADDING_RATIO = 1 / 32
-local SHAPE_RT_MIN_PADDING = 8
-local SHAPE_RATIO_QUANTIZATION = 256
-local SHAPE_RING_THICKNESS_COMPENSATION_MAX = 0.008
-local SHAPE_RING_THICKNESS_COMPENSATION_SCALE = 0.2
-local STRIPE_PATTERN_RT_SIZE = 64
-local STRIPE_PATTERN_FILL_ALPHA = 100
-local STRIPE_PATTERN_STRIPE_ALPHA = 200
-local STRIPE_PATTERN_STRIPE_RATIO = 0.5
-local STRIPE_PATTERN_WORLD_TILE = 5.5
-local STRIPE_TRIANGLE_ALPHA_SCALE = 0.45
-local STRIPE_OCCLUDED_REFERENCE_DISTANCE = 100
-local STRIPE_OCCLUDED_MIN_SCREEN_SCALE = 0.01
-local STRIPE_OCCLUDED_MAX_SCREEN_SCALE = 100
-local STRIPE_OCCLUDED_SCREEN_PARALLAX = 0.12
-local STRIPE_PATTERN_NAME = "magic_align_stripe_pattern"
-local STRIPE_PATTERN_MATERIAL_FLAGS = bit.bor(16, 32, 128, 2048, 2097152)
-local STRIPE_PATTERN_REBUILD_HOOK = "magic_align_stripe_pattern_rebuild"
-local WIREFRAME_MATERIAL = Material("models/wireframe")
-local GRID_ALPHA_PRIMARY = 64
-local GRID_ALPHA_SECONDARY = 64
-local SNAP_LINE_ALPHA = 255
-local SNAP_LABEL_ALPHA = 235
-local SNAP_LABEL_INSET = 1.6
-local GRID_LABEL_PERCENT_CVAR = "magic_align_grid_label_percent"
-local PREVIEW_OCCLUDED_CVAR = "magic_align_preview_occluded"
-local PREVIEW_OCCLUDED_DEFAULT_COLOR = Color(255, 179, 48, 222)
-local TRANSLATION_SNAP_AXIS_TICK_COUNT = 21
-local TRANSLATION_SNAP_GRID_HALF_CELLS = 5
-local ROTATION_RING_DEFAULT_SEGMENTS = 32
-local ROTATION_RING_MIN_SEGMENTS = 8
-local ROTATION_RING_MAX_SEGMENTS = 360
-local ROTATION_RING_FILL_ALPHA = 40
-local ROTATION_RING_EDGE_ALPHA = 220
-local ROTATION_RING_MIN_HALF_WIDTH = 0.05
-local ROTATION_DELTA_SECTOR_ALPHA = 76
-local ROTATION_DELTA_SECTOR_EDGE_ALPHA = 170
+local RENDER_CONFIG = {
+    billboardScale = 0.035,
+    billboardPush = 0.15,
+    circleSegments = 40,
+    ringQualityCvar = "magic_align_ring_quality",
+    gridLabelPercentCvar = "magic_align_grid_label_percent",
+    gridLabelReduceFractionCvar = "magic_align_grid_label_reduce_fraction",
+    gridAlphaCvar = "magic_align_grid_alpha",
+    previewOccludedCvar = "magic_align_preview_occluded",
+    previewOccludedDefaultColor = Color(255, 179, 48, 222),
+    wireframeMaterial = Material("models/wireframe")
+}
+local SHAPE_CONFIG = {
+    cacheName = "magic_align_shape",
+    rebuildHook = "magic_align_shape_rebuild",
+    rebuildCallback = "magic_align_shape_quality",
+    materialFlags = bit.bor(16, 32, 128, 2048, 2097152),
+    rtPaddingRatio = 1 / 32,
+    rtMinPadding = 8,
+    ratioQuantization = 256,
+    ringThicknessCompensationMax = 0.008,
+    ringThicknessCompensationScale = 0.2
+}
+local STRIPE_CONFIG = {
+    rtSize = 64,
+    fillAlpha = 100,
+    stripeAlpha = 200,
+    stripeRatio = 0.5,
+    worldTile = 5.5,
+    triangleAlphaScale = 0.45,
+    occludedReferenceDistance = 100,
+    occludedMinScreenScale = 0.01,
+    occludedMaxScreenScale = 100,
+    occludedScreenParallax = 0.12,
+    patternName = "magic_align_stripe_pattern",
+    materialFlags = bit.bor(16, 32, 128, 2048, 2097152),
+    rebuildHook = "magic_align_stripe_pattern_rebuild"
+}
+local GRID_CONFIG = {
+    alphaPrimary = 64,
+    alphaSecondary = 64,
+    snapLineAlpha = 255,
+    snapLabelAlpha = 235,
+    snapLabelInset = 1.6
+}
+local TRANSLATION_CONFIG = {
+    axisTickCount = 21,
+    gridHalfCells = 5
+}
+local ROTATION_CONFIG = {
+    ringDefaultSegments = 32,
+    ringMinSegments = 8,
+    ringMaxSegments = 360,
+    ringFillAlpha = 40,
+    ringEdgeAlpha = 220,
+    ringMinHalfWidth = 0.05,
+    deltaSectorAlpha = 76,
+    deltaSectorEdgeAlpha = 170
+}
+client.activeTool = client.activeTool or function()
+    return nil
+end
+client.validateState = client.validateState or function()
+    return true
+end
+client.gizmo = client.gizmo or function()
+    return nil
+end
+client.rotationSnapDivisions = client.rotationSnapDivisions or function()
+    return 24
+end
+client.rotationSnapStep = client.rotationSnapStep or function(tool)
+    return 360 / math.max(client.rotationSnapDivisions(tool), 1)
+end
+client.translationSnapStep = client.translationSnapStep or function()
+    return 0
+end
+client.rotationSnapMaxVisibleTicks = client.rotationSnapMaxVisibleTicks or 20
+client.isMajorRotationTick = client.isMajorRotationTick or function()
+    return false
+end
+client.sampleWorldPos = client.sampleWorldPos or function(_, sample)
+    return sample and sample.pos or nil
+end
+client.ringQualityPresets = client.ringQualityPresets or {}
+client.defaultRingQualityIndex = client.defaultRingQualityIndex or 2
 local circlePointCache = {}
 local unitCircle
 local stripePatternTexture
@@ -109,14 +138,14 @@ local function drawStripePatternRect(intensity, x, y, width, height)
 end
 
 local function stripePatternStripeSize()
-    return math.Clamp(math.floor(STRIPE_PATTERN_RT_SIZE * STRIPE_PATTERN_STRIPE_RATIO + 0.5), 1, STRIPE_PATTERN_RT_SIZE)
+    return math.Clamp(math.floor(STRIPE_CONFIG.rtSize * STRIPE_CONFIG.stripeRatio + 0.5), 1, STRIPE_CONFIG.rtSize)
 end
 
 local function drawStripePatternDiagonal(intensity)
     intensity = math.Clamp(math.floor(tonumber(intensity) or 0), 0, 255)
     surface.SetDrawColor(intensity, intensity, intensity, intensity)
 
-    local size = STRIPE_PATTERN_RT_SIZE
+    local size = STRIPE_CONFIG.rtSize
     local stripeSize = stripePatternStripeSize()
     for y = 0, size - 1 do
         local startX = (y - stripeSize + 1) % size
@@ -128,10 +157,6 @@ local function drawStripePatternDiagonal(intensity)
             surface.DrawRect(0, y, wrappedWidth, 1)
         end
     end
-end
-
-local function copyVec(value)
-    return M.CopyVectorPrecise(value)
 end
 
 local function drawLine(startPos, endPos, color, writeZ)
@@ -159,16 +184,41 @@ local function meshPosition(position)
     mesh.Position(position)
 end
 
+local renderAnchorOptionCache = {}
+
 local function anchorOptions(tool, side)
     if not tool then return nil end
 
-    return M.AnchorOptionsFromReader(function(name)
-        return tool:GetClientInfo(name)
-    end, side)
+    local cache = renderAnchorOptionCache[side]
+    if not cache then
+        cache = { options = {} }
+        renderAnchorOptionCache[side] = cache
+    end
+
+    local prefix = side
+    if prefix ~= "" and not string.EndsWith(prefix, "_") then
+        prefix = prefix .. "_"
+    end
+
+    local mid12 = M.ClampAnchorPercent(tool:GetClientInfo(prefix .. "mid12_pct"))
+    local mid23 = M.ClampAnchorPercent(tool:GetClientInfo(prefix .. "mid23_pct"))
+    local mid13 = M.ClampAnchorPercent(tool:GetClientInfo(prefix .. "mid13_pct"))
+
+    if cache.tool ~= tool
+        or cache.options.mid12_pct ~= mid12
+        or cache.options.mid23_pct ~= mid23
+        or cache.options.mid13_pct ~= mid13 then
+        cache.tool = tool
+        cache.options.mid12_pct = mid12
+        cache.options.mid23_pct = mid23
+        cache.options.mid13_pct = mid13
+    end
+
+    return cache.options
 end
 
 local function circlePointsForSegments(segments)
-    segments = math.max(math.Round(tonumber(segments) or CIRCLE_SEGMENTS), 3)
+    segments = math.max(math.Round(tonumber(segments) or RENDER_CONFIG.circleSegments), 3)
 
     local points = circlePointCache[segments]
     if points then
@@ -185,37 +235,79 @@ local function circlePointsForSegments(segments)
     return points
 end
 
-unitCircle = circlePointsForSegments(CIRCLE_SEGMENTS)
+unitCircle = circlePointsForSegments(RENDER_CONFIG.circleSegments)
+
+local ZERO_VEC = VectorP(0, 0, 0)
+local ZERO_ANG = AngleP(0, 0, 0)
+
+local function setVec(out, value)
+    if not isvector(value) then return end
+
+    if not isvector(out) then
+        return VectorP(value.x, value.y, value.z)
+    end
+
+    out.x, out.y, out.z = value.x, value.y, value.z
+    return out
+end
+
+local cachedColors = {}
+
+local function cachedColor(r, g, b, a)
+    r = math.Clamp(math.floor(tonumber(r) or 0), 0, 255)
+    g = math.Clamp(math.floor(tonumber(g) or 0), 0, 255)
+    b = math.Clamp(math.floor(tonumber(b) or 0), 0, 255)
+    a = math.Clamp(math.floor(tonumber(a) or 255), 0, 255)
+
+    local key = (((r * 256) + g) * 256 + b) * 256 + a
+    local cached = cachedColors[key]
+    if cached then
+        return cached
+    end
+
+    cached = Color(r, g, b, a)
+    cachedColors[key] = cached
+    return cached
+end
 
 local function colorAlpha(color, alpha)
-    return Color(color.r, color.g, color.b, alpha == nil and color.a or alpha)
+    return cachedColor(color.r, color.g, color.b, alpha == nil and color.a or alpha)
 end
 
 local function cappedAlpha(color, alpha)
     local baseAlpha = color.a == nil and 255 or color.a
-    return Color(color.r, color.g, color.b, math.min(baseAlpha, alpha))
+    return cachedColor(color.r, color.g, color.b, math.min(baseAlpha, alpha))
 end
 
 local function scaledAlphaColor(color, scale)
     local baseAlpha = color.a == nil and 255 or color.a
-    return Color(color.r, color.g, color.b, math.Clamp(math.floor(baseAlpha * scale + 0.5), 0, 255))
+    return cachedColor(color.r, color.g, color.b, math.Clamp(math.floor(baseAlpha * scale + 0.5), 0, 255))
 end
 
 local function clampUnitInterval(value)
     return math.Clamp(tonumber(value) or 0, 0, 1)
 end
 
+local function readClampedConVarInt(name, fallback, minValue, maxValue)
+    local cvar = name and GetConVar(name) or nil
+    local value = cvar and cvar:GetFloat() or fallback
+
+    return math.Clamp(math.floor((tonumber(value) or fallback or 0) + 0.5), minValue or 0, maxValue or 255)
+end
+
 local function ringQualityIndex(tool)
-    local raw = tool and tool.GetClientNumber and tool:GetClientNumber("ring_quality") or defaultRingQualityIndex
-    return math.Clamp(math.Round(tonumber(raw) or defaultRingQualityIndex), 1, #ringQualityPresets)
+    local raw = tool and tool.GetClientNumber and tool:GetClientNumber("ring_quality") or client.defaultRingQualityIndex
+    return math.Clamp(math.Round(tonumber(raw) or client.defaultRingQualityIndex), 1, math.max(#client.ringQualityPresets, 1))
 end
 
 local function ringRenderSettingsForTool(tool)
-    return ringQualityPresets[ringQualityIndex(tool)] or ringQualityPresets[defaultRingQualityIndex] or ringQualityPresets[1]
+    return client.ringQualityPresets[ringQualityIndex(tool)]
+        or client.ringQualityPresets[client.defaultRingQualityIndex]
+        or client.ringQualityPresets[1]
 end
 
 local function activeRingRenderSettings()
-    local tool = activeTool and select(1, activeTool()) or nil
+    local tool = select(1, client.activeTool())
     return ringRenderSettingsForTool(tool)
 end
 
@@ -223,28 +315,50 @@ local function ringRtSize(settings)
     return settings and (settings.ringRtSize or settings.rtSize) or nil
 end
 
+local function scaleCircleResolutionValue(value, minValue)
+    value = tonumber(value)
+    if value == nil then return end
+
+    return math.max(math.floor(value * 0.25 + 0.5), minValue or 1)
+end
+
 local function circleSpriteRtSize(settings)
-    return settings and (settings.circleRtSize or settings.ringRtSize or settings.rtSize) or nil
+    if not settings then return end
+
+    local raw = settings.circleRtSize
+    if raw ~= nil then
+        return math.max(math.Round(tonumber(raw) or 0), 1)
+    end
+
+    return scaleCircleResolutionValue(settings.ringRtSize or settings.rtSize, 1)
 end
 
 local function ringRenderSegments(settings)
-    local raw = settings and (settings.ringSegments or settings.segments) or ROTATION_RING_DEFAULT_SEGMENTS
-    return math.Clamp(math.Round(tonumber(raw) or ROTATION_RING_DEFAULT_SEGMENTS), ROTATION_RING_MIN_SEGMENTS, ROTATION_RING_MAX_SEGMENTS)
+    local raw = settings and (settings.ringSegments or settings.segments) or ROTATION_CONFIG.ringDefaultSegments
+    return math.Clamp(math.Round(tonumber(raw) or ROTATION_CONFIG.ringDefaultSegments), ROTATION_CONFIG.ringMinSegments, ROTATION_CONFIG.ringMaxSegments)
 end
 
 local function circleSpriteSegments(settings)
-    local raw = settings and (settings.circleSegments or settings.ringSegments or settings.segments) or CIRCLE_SEGMENTS
-    return math.max(math.Round(tonumber(raw) or CIRCLE_SEGMENTS), 3)
+    if settings and settings.circleSegments ~= nil then
+        return math.max(math.Round(tonumber(settings.circleSegments) or RENDER_CONFIG.circleSegments), 3)
+    end
+
+    local derived = settings and scaleCircleResolutionValue(settings.ringSegments or settings.segments, 3) or nil
+    if derived then
+        return derived
+    end
+
+    return math.max(math.Round(RENDER_CONFIG.circleSegments), 3)
 end
 
 local function rotationRingTickLimit(settings, divisions)
-    local raw = settings and settings.tickCount or rotationSnapMaxVisibleTicks
-    return math.Clamp(math.Round(tonumber(raw) or rotationSnapMaxVisibleTicks), 1, math.max(math.Round(tonumber(divisions) or 0), 1))
+    local raw = settings and settings.tickCount or client.rotationSnapMaxVisibleTicks
+    return math.Clamp(math.Round(tonumber(raw) or client.rotationSnapMaxVisibleTicks), 1, math.max(math.Round(tonumber(divisions) or 0), 1))
 end
 
 local function quantizeShapeRatio(value)
     value = clampUnitInterval(value)
-    return math.Clamp(math.Round(value * SHAPE_RATIO_QUANTIZATION) / SHAPE_RATIO_QUANTIZATION, 0, 1)
+    return math.Clamp(math.Round(value * SHAPE_CONFIG.ratioQuantization) / SHAPE_CONFIG.ratioQuantization, 0, 1)
 end
 
 local function compensatedInnerRatio(innerRatio)
@@ -255,7 +369,7 @@ local function compensatedInnerRatio(innerRatio)
 
     local thicknessRatio = math.Clamp(1 - innerRatio, 0, 1)
     thicknessRatio = math.Clamp(
-        thicknessRatio + math.min(SHAPE_RING_THICKNESS_COMPENSATION_MAX, thicknessRatio * SHAPE_RING_THICKNESS_COMPENSATION_SCALE),
+        thicknessRatio + math.min(SHAPE_CONFIG.ringThicknessCompensationMax, thicknessRatio * SHAPE_CONFIG.ringThicknessCompensationScale),
         0,
         1
     )
@@ -283,7 +397,7 @@ local function shapeMetricsForRtSize(rtSize)
     end
 
     local halfSize = rtSize * 0.5
-    local padding = math.max(math.floor(rtSize * SHAPE_RT_PADDING_RATIO + 0.5), SHAPE_RT_MIN_PADDING)
+    local padding = math.max(math.floor(rtSize * SHAPE_CONFIG.rtPaddingRatio + 0.5), SHAPE_CONFIG.rtMinPadding)
     local outerRadius = math.max(halfSize - padding, 1)
 
     metrics = {
@@ -292,7 +406,7 @@ local function shapeMetricsForRtSize(rtSize)
         padding = padding,
         outerRadius = outerRadius,
         worldScale = halfSize / outerRadius,
-        segments = math.max(math.floor(rtSize / 32 + 0.5), CIRCLE_SEGMENTS)
+        segments = math.max(math.floor(rtSize / 32 + 0.5), RENDER_CONFIG.circleSegments)
     }
 
     shapeMetricCache[rtSize] = metrics
@@ -379,7 +493,7 @@ end
 
 local function ensureShapeWhiteMaterial()
     if not shapeWhiteMaterial then
-        shapeWhiteMaterial = CreateMaterial(SHAPE_CACHE_NAME .. "_white_mat", "UnlitGeneric", {
+    shapeWhiteMaterial = CreateMaterial(SHAPE_CONFIG.cacheName .. "_white_mat", "UnlitGeneric", {
             ["$basetexture"] = "vgui/white",
             ["$translucent"] = "1",
             ["$additive"] = "1",
@@ -391,7 +505,7 @@ local function ensureShapeWhiteMaterial()
     end
 
     local materialFlags = shapeWhiteMaterial:GetInt("$flags") or 0
-    local requiredFlags = bit.bor(materialFlags, SHAPE_CACHE_MATERIAL_FLAGS)
+    local requiredFlags = bit.bor(materialFlags, SHAPE_CONFIG.materialFlags)
     if materialFlags ~= requiredFlags then
         shapeWhiteMaterial:SetInt("$flags", requiredFlags)
     end
@@ -406,7 +520,7 @@ local function buildShapeCacheKey(shapeKind, rtSize, innerRatio, segments)
         return ("%s_%d_%d"):format(shapeKind, rtSize, segments)
     end
 
-    return ("%s_%d_%d_%d"):format(shapeKind, rtSize, math.Round(innerRatio * SHAPE_RATIO_QUANTIZATION), segments)
+    return ("%s_%d_%d_%d"):format(shapeKind, rtSize, math.Round(innerRatio * SHAPE_CONFIG.ratioQuantization), segments)
 end
 
 local function rebuildShapeCacheEntry(entry)
@@ -431,9 +545,9 @@ local function rebuildShapeCacheEntry(entry)
             local bandThickness = math.max(outerRadius - innerRadius, 1)
             local edgeThickness = math.min(math.max(math.floor(metrics.rtSize / 512 + 0.5), 1), bandThickness * 0.5)
 
-            drawRing2DByRadiiAt(center, center, outerRadius, innerRadius, Color(255, 255, 255, ROTATION_RING_FILL_ALPHA), points)
-            drawRing2DByRadiiAt(center, center, outerRadius, math.max(innerRadius, outerRadius - edgeThickness), Color(255, 255, 255, ROTATION_RING_EDGE_ALPHA), points)
-            drawRing2DByRadiiAt(center, center, math.min(outerRadius, innerRadius + edgeThickness), innerRadius, Color(255, 255, 255, ROTATION_RING_EDGE_ALPHA), points)
+        drawRing2DByRadiiAt(center, center, outerRadius, innerRadius, Color(255, 255, 255, ROTATION_CONFIG.ringFillAlpha), points)
+        drawRing2DByRadiiAt(center, center, outerRadius, math.max(innerRadius, outerRadius - edgeThickness), Color(255, 255, 255, ROTATION_CONFIG.ringEdgeAlpha), points)
+        drawRing2DByRadiiAt(center, center, math.min(outerRadius, innerRadius + edgeThickness), innerRadius, Color(255, 255, 255, ROTATION_CONFIG.ringEdgeAlpha), points)
         end
     cam.End2D()
     render.PopRenderTarget()
@@ -456,7 +570,7 @@ local function ensureCachedShape(shapeKind, rtSize, innerRatio, segments)
     local entry = shapeCache[cacheKey]
     if not entry then
         local texture = GetRenderTargetEx(
-            SHAPE_CACHE_NAME .. "_" .. cacheKey .. "_rt",
+        SHAPE_CONFIG.cacheName .. "_" .. cacheKey .. "_rt",
             rtSize,
             rtSize,
             RT_SIZE_NO_CHANGE,
@@ -465,7 +579,7 @@ local function ensureCachedShape(shapeKind, rtSize, innerRatio, segments)
             0,
             IMAGE_FORMAT_RGBA8888
         )
-        local material = CreateMaterial(SHAPE_CACHE_NAME .. "_" .. cacheKey .. "_mat", "UnlitGeneric", {
+    local material = CreateMaterial(SHAPE_CONFIG.cacheName .. "_" .. cacheKey .. "_mat", "UnlitGeneric", {
             ["$basetexture"] = texture:GetName(),
             ["$translucent"] = "1",
             ["$additive"] = "1",
@@ -491,7 +605,7 @@ local function ensureCachedShape(shapeKind, rtSize, innerRatio, segments)
 
     entry.material:SetTexture("$basetexture", entry.texture)
     local materialFlags = entry.material:GetInt("$flags") or 0
-    local requiredFlags = bit.bor(materialFlags, SHAPE_CACHE_MATERIAL_FLAGS)
+    local requiredFlags = bit.bor(materialFlags, SHAPE_CONFIG.materialFlags)
     if materialFlags ~= requiredFlags then
         entry.material:SetInt("$flags", requiredFlags)
     end
@@ -598,14 +712,14 @@ local function drawCachedShapePlane(origin, axisA, axisB, outerRadius, entry, co
 end
 
 local function queueShapeCacheWarmup(tool)
-    hook.Remove("PostRender", SHAPE_CACHE_REBUILD_HOOK)
+    hook.Remove("PostRender", SHAPE_CONFIG.rebuildHook)
 
     local settings = tool and ringRenderSettingsForTool(tool) or activeRingRenderSettings()
     if not settings or settings.realtime then
         return
     end
 
-    hook.Add("PostRender", SHAPE_CACHE_REBUILD_HOOK, function()
+    hook.Add("PostRender", SHAPE_CONFIG.rebuildHook, function()
         local ringSize = ringRtSize(settings)
         local circleSize = circleSpriteRtSize(settings)
         local ringSegments = ringRenderSegments(settings)
@@ -617,12 +731,12 @@ local function queueShapeCacheWarmup(tool)
         if circleSize then
             ensureCachedShape("disc", circleSize, nil, circleSegments)
         end
-        hook.Remove("PostRender", SHAPE_CACHE_REBUILD_HOOK)
+        hook.Remove("PostRender", SHAPE_CONFIG.rebuildHook)
     end)
 end
 
 local function selectionColor(state)
-    return Color(colors.source.r, colors.source.g, colors.source.b, 255)
+    return cachedColor(colors.source.r, colors.source.g, colors.source.b, 255)
 end
 
 shapeMetricCache.renderPerf = shapeMetricCache.renderPerf or {}
@@ -630,7 +744,7 @@ shapeMetricCache.renderPerf = shapeMetricCache.renderPerf or {}
 function shapeMetricCache.renderPerf.drawWireMarkerBatch(entries, ignoreZ)
     if not istable(entries) or #entries == 0 then return end
 
-    render.MaterialOverride(WIREFRAME_MATERIAL)
+    render.MaterialOverride(RENDER_CONFIG.wireframeMaterial)
     render.SuppressEngineLighting(true)
     if ignoreZ then
         cam.IgnoreZ(true)
@@ -661,12 +775,18 @@ function shapeMetricCache.renderPerf.addGhostRenderEntry(entries, ghost, minBlen
     if ghost.GetNoDraw and ghost:GetNoDraw() then return end
 
     local ghostColor = ghost:GetColor()
-    entries[#entries + 1] = {
-        ghost = ghost,
-        alpha = ghostColor.a or 255,
-        minBlend = minBlend,
-        maxBlend = maxBlend
-    }
+    local index = (tonumber(entries._magicAlignCount) or 0) + 1
+    entries._magicAlignCount = index
+    local entry = entries[index]
+    if not istable(entry) then
+        entry = {}
+        entries[index] = entry
+    end
+
+    entry.ghost = ghost
+    entry.alpha = ghostColor.a or 255
+    entry.minBlend = minBlend
+    entry.maxBlend = maxBlend
 end
 
 function shapeMetricCache.renderPerf.drawGhostRenderEntries(entries)
@@ -692,17 +812,17 @@ local function previewOccludedEnabled(tool)
         return (tonumber(tool:GetClientNumber("preview_occluded")) or 0) ~= 0
     end
 
-    local cvar = GetConVar(PREVIEW_OCCLUDED_CVAR)
+    local cvar = GetConVar(RENDER_CONFIG.previewOccludedCvar)
     return cvar and cvar:GetBool() or false
 end
 
 local function previewOccludedPickerColor(tool)
     if tool and tool.GetClientNumber then
-        return Color(
-            clampColorByte(tool:GetClientNumber("preview_occluded_r"), PREVIEW_OCCLUDED_DEFAULT_COLOR.r),
-            clampColorByte(tool:GetClientNumber("preview_occluded_g"), PREVIEW_OCCLUDED_DEFAULT_COLOR.g),
-            clampColorByte(tool:GetClientNumber("preview_occluded_b"), PREVIEW_OCCLUDED_DEFAULT_COLOR.b),
-            clampColorByte(tool:GetClientNumber("preview_occluded_a"), PREVIEW_OCCLUDED_DEFAULT_COLOR.a)
+        return cachedColor(
+            clampColorByte(tool:GetClientNumber("preview_occluded_r"), RENDER_CONFIG.previewOccludedDefaultColor.r),
+            clampColorByte(tool:GetClientNumber("preview_occluded_g"), RENDER_CONFIG.previewOccludedDefaultColor.g),
+            clampColorByte(tool:GetClientNumber("preview_occluded_b"), RENDER_CONFIG.previewOccludedDefaultColor.b),
+            clampColorByte(tool:GetClientNumber("preview_occluded_a"), RENDER_CONFIG.previewOccludedDefaultColor.a)
         )
     end
 
@@ -711,11 +831,11 @@ local function previewOccludedPickerColor(tool)
         return clampColorByte(cvar and cvar:GetInt() or fallback, fallback)
     end
 
-    return Color(
-        cvarByte("r", PREVIEW_OCCLUDED_DEFAULT_COLOR.r),
-        cvarByte("g", PREVIEW_OCCLUDED_DEFAULT_COLOR.g),
-        cvarByte("b", PREVIEW_OCCLUDED_DEFAULT_COLOR.b),
-        cvarByte("a", PREVIEW_OCCLUDED_DEFAULT_COLOR.a)
+    return cachedColor(
+        cvarByte("r", RENDER_CONFIG.previewOccludedDefaultColor.r),
+        cvarByte("g", RENDER_CONFIG.previewOccludedDefaultColor.g),
+        cvarByte("b", RENDER_CONFIG.previewOccludedDefaultColor.b),
+        cvarByte("a", RENDER_CONFIG.previewOccludedDefaultColor.a)
     )
 end
 
@@ -724,7 +844,7 @@ local function scaledOccludedPreviewColor(tool, holoAlpha)
     local alpha = math.Clamp(math.floor((picker.a / 255) * clampColorByte(holoAlpha, 0) + 0.5), 0, 255)
     if alpha <= 0 then return end
 
-    return Color(picker.r, picker.g, picker.b, alpha)
+    return cachedColor(picker.r, picker.g, picker.b, alpha)
 end
 
 local function stencilAvailable()
@@ -746,19 +866,19 @@ end
 local function stripeDistanceScale(distance)
     distance = math.max(tonumber(distance) or 1, 1)
     return math.Clamp(
-        STRIPE_OCCLUDED_REFERENCE_DISTANCE / distance,
-        STRIPE_OCCLUDED_MIN_SCREEN_SCALE,
-        STRIPE_OCCLUDED_MAX_SCREEN_SCALE
+        STRIPE_CONFIG.occludedReferenceDistance / distance,
+        STRIPE_CONFIG.occludedMinScreenScale,
+        STRIPE_CONFIG.occludedMaxScreenScale
     )
 end
 
 local function occludedStripeTileSize(ghost)
-    if not IsValid(ghost) then return STRIPE_PATTERN_RT_SIZE end
+    if not IsValid(ghost) then return STRIPE_CONFIG.rtSize end
 
     local center = ghost.WorldSpaceCenter and ghost:WorldSpaceCenter() or ghost:GetPos()
-    if not isvector(center) then return STRIPE_PATTERN_RT_SIZE end
+    if not isvector(center) then return STRIPE_CONFIG.rtSize end
 
-    return math.max(1, STRIPE_PATTERN_RT_SIZE * stripeDistanceScale(EyePos():Distance(center)))
+    return math.max(1, STRIPE_CONFIG.rtSize * stripeDistanceScale(EyePos():Distance(center)))
 end
 
 local function occludedStripeScreenCenter(ghost)
@@ -795,7 +915,7 @@ local function occludedStripeScreenCenter(ghost)
                     yIndex == 0 and mins.y or maxs.y,
                     zIndex == 0 and mins.z or maxs.z
                 )
-                local world = LocalToWorldPrecise(localPos, AngleP(0, 0, 0), pos, ang)
+                local world = LocalToWorldPosPrecise(localPos, pos, ang)
                 local screen = world:ToScreen()
                 minX = math.min(minX, screen.x)
                 minY = math.min(minY, screen.y)
@@ -813,7 +933,7 @@ local function occludedStripeScreenCenter(ghost)
 end
 
 local function occludedStripeParallaxCenter(centerX, centerY)
-    local amount = math.Clamp(tonumber(STRIPE_OCCLUDED_SCREEN_PARALLAX) or 0, 0, 1)
+    local amount = math.Clamp(tonumber(STRIPE_CONFIG.occludedScreenParallax) or 0, 0, 1)
     if amount <= 0 then return centerX, centerY end
 
     local screenCenterX = ScrW() * 0.5
@@ -837,7 +957,7 @@ local function drawScreenStripePattern(color, tileSize, centerX, centerY)
     local stripeMaterial = stripePatternScreenMaterial or stripePatternMaterial
     if not stripeMaterial then return false end
 
-    tileSize = math.max(1, tonumber(tileSize) or STRIPE_PATTERN_RT_SIZE)
+    tileSize = math.max(1, tonumber(tileSize) or STRIPE_CONFIG.rtSize)
     local screenWidth = ScrW()
     local screenHeight = ScrH()
     centerX = tonumber(centerX) or screenWidth * 0.5
@@ -940,7 +1060,7 @@ local function drawCircle2D(radius, color, segments)
         draw.NoTexture()
     end
 
-    drawCircle2DAt(0, 0, radius, color, circlePointsForSegments(segments or CIRCLE_SEGMENTS))
+    drawCircle2DAt(0, 0, radius, color, circlePointsForSegments(segments or RENDER_CONFIG.circleSegments))
 end
 
 local function drawRing2DByRadii(outerRadius, innerRadius, color, segments)
@@ -951,21 +1071,15 @@ local function drawRing2DByRadii(outerRadius, innerRadius, color, segments)
         draw.NoTexture()
     end
 
-    drawRing2DByRadiiAt(0, 0, outerRadius, innerRadius, color, circlePointsForSegments(segments or CIRCLE_SEGMENTS))
-end
-
-local function drawRing2D(radius, thickness, color, segments)
-    if radius <= 0 or thickness <= 0 then return end
-    drawRing2DByRadii(radius, math.max(radius - thickness, 0), color, segments)
+    drawRing2DByRadiiAt(0, 0, outerRadius, innerRadius, color, circlePointsForSegments(segments or RENDER_CONFIG.circleSegments))
 end
 
 local function drawBillboard(worldPos, painter, viewerPos)
     if not isvector(worldPos) then return end
 
-    worldPos = copyVec(worldPos)
     viewerPos = isvector(viewerPos)
         and viewerPos
-        or copyVec(IsValid(LocalPlayer()) and LocalPlayer():GetShootPos() or EyePos())
+        or (IsValid(LocalPlayer()) and LocalPlayer():GetShootPos() or EyePos())
     local toViewer = viewerPos - worldPos
     if toViewer:LengthSqr() < 1e-8 then
         toViewer = VectorP(0, 0, 1)
@@ -975,25 +1089,25 @@ local function drawBillboard(worldPos, painter, viewerPos)
 
     local ang = toViewer:Angle()
     ang = M.RotateAngleAroundAxisPrecise(ang, M.AngleRightPrecise(ang), -90)
-    local pos = worldPos + toViewer * BILLBOARD_PUSH
+    local pos = worldPos + toViewer * RENDER_CONFIG.billboardPush
 
     local drawPos = toVector(pos)
     local drawAng = toAngle(ang)
     if not drawPos or not drawAng then return end
 
     -- Eine einzelne, zum Viewport gedrehte 3D2D-Flaeche reicht hier aus.
-    cam.Start3D2D(drawPos, drawAng, BILLBOARD_SCALE)
+    cam.Start3D2D(drawPos, drawAng, RENDER_CONFIG.billboardScale)
         painter()
     cam.End3D2D()
 end
 
-local function drawCircleSprite(worldPos, radius, color, settings, viewerPos, useRingQuality)
+local function drawCircleSprite(worldPos, radius, color, settings, viewerPos)
     settings = settings or activeRingRenderSettings()
 
-    local pixelRadius = radius / BILLBOARD_SCALE
+    local pixelRadius = radius / RENDER_CONFIG.billboardScale
     local primaryInnerRadius = resolvedRingInnerRadius(math.max(pixelRadius - math.max(pixelRadius * 0.18, 4), 0), pixelRadius)
-    local circleSegments = useRingQuality and ringRenderSegments(settings) or circleSpriteSegments(settings)
-    local cachedCircleRtSize = useRingQuality and ringRtSize(settings) or circleSpriteRtSize(settings)
+    local circleSegments = circleSpriteSegments(settings)
+    local cachedCircleRtSize = circleSpriteRtSize(settings)
 
     drawBillboard(worldPos, function()
         if settings and not settings.realtime and cachedCircleRtSize then
@@ -1008,19 +1122,19 @@ local function drawCircleSprite(worldPos, radius, color, settings, viewerPos, us
     end, viewerPos)
 end
 
-local function drawRingSprite(worldPos, radius, thickness, color, settings, viewerPos)
+local function drawRingSprite(worldPos, radius, thickness, color, settings, viewerPos, matchCircleQuality)
     settings = settings or activeRingRenderSettings()
 
-    local pixelRadius = radius / BILLBOARD_SCALE
-    local pixelThickness = math.max(thickness / BILLBOARD_SCALE, 4)
+    local pixelRadius = radius / RENDER_CONFIG.billboardScale
+    local pixelThickness = math.max(thickness / RENDER_CONFIG.billboardScale, 4)
     local mainInnerRadius = resolvedRingInnerRadius(math.max(pixelRadius - pixelThickness, 0), pixelRadius)
     local accentOuterRadius = math.max(pixelRadius - pixelThickness * 0.7, 0)
     local accentInnerRadius = resolvedRingInnerRadius(
         math.max(accentOuterRadius - math.max(pixelThickness * 0.22, 2), 0),
         accentOuterRadius
     )
-    local ringSegments = ringRenderSegments(settings)
-    local cachedRingRtSize = ringRtSize(settings)
+    local ringSegments = matchCircleQuality and circleSpriteSegments(settings) or ringRenderSegments(settings)
+    local cachedRingRtSize = matchCircleQuality and circleSpriteRtSize(settings) or ringRtSize(settings)
 
     drawBillboard(worldPos, function()
         if settings and not settings.realtime and cachedRingRtSize then
@@ -1070,8 +1184,8 @@ local function isAngleMultiple(angle, interval)
 end
 
 local function isMajorTick(angle)
-    if isMajorRotationTick then
-        return isMajorRotationTick(angle)
+    if client.isMajorRotationTick(angle) then
+        return true
     end
 
     return isAngleMultiple(angle, 30) or isAngleMultiple(angle, 45)
@@ -1188,7 +1302,19 @@ end
 local function commonGridDivisions(face, axisKey)
     local common = 1
     local found = false
-    local gridSets = { face and face.gridA, face and face.gridB }
+    local gridSets = {}
+    local seen = {}
+
+    local function addGrid(grid)
+        if not grid or seen[grid] then return end
+        seen[grid] = true
+        gridSets[#gridSets + 1] = grid
+    end
+
+    addGrid(face and face.gridA)
+    addGrid(face and face.gridB)
+    addGrid(face and face.snapGridU)
+    addGrid(face and face.snapGridV)
 
     for _, grid in ipairs(gridSets) do
         local divisions = gridAxisDivisions(grid, axisKey)
@@ -1201,19 +1327,24 @@ local function commonGridDivisions(face, axisKey)
     return found and common or 0
 end
 
-local function formatFractionLabel(index, divisions, commonDivisions)
+local function formatFractionLabel(index, divisions, commonDivisions, reduce)
     index = math.Round(tonumber(index) or 0)
     divisions = math.max(math.Round(tonumber(divisions) or 0), 0)
     commonDivisions = math.max(math.Round(tonumber(commonDivisions) or divisions), divisions)
 
     if divisions <= 0 or index <= 0 or index >= divisions then return end
 
-    local numerator = math.Round(index * commonDivisions / divisions)
-    local denominator = commonDivisions
-    local divisor = gcd(numerator, denominator)
+    local numerator = index
+    local denominator = divisions
 
-    numerator = math.floor(numerator / divisor)
-    denominator = math.floor(denominator / divisor)
+    if reduce ~= false then
+        numerator = math.Round(index * commonDivisions / divisions)
+        denominator = commonDivisions
+        local divisor = gcd(numerator, denominator)
+
+        numerator = math.floor(numerator / divisor)
+        denominator = math.floor(denominator / divisor)
+    end
 
     if denominator <= 1 then return tostring(numerator) end
 
@@ -1221,9 +1352,20 @@ local function formatFractionLabel(index, divisions, commonDivisions)
 end
 
 local function shouldUsePercentGridLabels()
-    local cvar = GetConVar(GRID_LABEL_PERCENT_CVAR)
+    local cvar = GetConVar(RENDER_CONFIG.gridLabelPercentCvar)
 
     return cvar and cvar:GetBool() or false
+end
+
+local function shouldReduceFractionGridLabels()
+    local cvar = GetConVar(RENDER_CONFIG.gridLabelReduceFractionCvar)
+
+    return cvar == nil or cvar:GetBool()
+end
+
+local function currentGridLineAlpha(isPrimary)
+    local fallback = isPrimary and GRID_CONFIG.alphaPrimary or GRID_CONFIG.alphaSecondary
+    return readClampedConVarInt(RENDER_CONFIG.gridAlphaCvar, fallback, 0, 255)
 end
 
 local function formatGridLineLabel(face, axisKey)
@@ -1235,7 +1377,7 @@ local function formatGridLineLabel(face, axisKey)
     local index = axisKey == "u" and face.snapIndexU or face.snapIndexV
     local divisions = gridAxisDivisions(grid, axisKey)
 
-    return formatFractionLabel(index, divisions, commonGridDivisions(face, axisKey))
+    return formatFractionLabel(index, divisions, commonGridDivisions(face, axisKey), shouldReduceFractionGridLabels())
 end
 
 local function insetLineEnds(a, b, inset)
@@ -1279,13 +1421,13 @@ local function faceLineWorldPoints(ent, face, grid, axisKey, value)
     local pos = ent:GetPos()
     local ang = ent:GetAngles()
 
-    return LocalToWorldPrecise(a, AngleP(0, 0, 0), pos, ang), LocalToWorldPrecise(b, AngleP(0, 0, 0), pos, ang)
+    return LocalToWorldPosPrecise(a, pos, ang), LocalToWorldPosPrecise(b, pos, ang)
 end
 
 local function drawSnapLineLabels2D(a, b, label, color)
     if not label then return end
 
-    local startPos, endPos = insetLineEnds(a, b, SNAP_LABEL_INSET)
+    local startPos, endPos = insetLineEnds(a, b, GRID_CONFIG.snapLabelInset)
     local startScreen = startPos:ToScreen()
     local endScreen = endPos:ToScreen()
 
@@ -1360,7 +1502,7 @@ local function rotationRingBandRadii(radius, padding)
     radius = tonumber(radius) or 0
     if radius <= 0 then return end
 
-    local halfWidth = math.max((tonumber(padding) or 0) * 0.5, ROTATION_RING_MIN_HALF_WIDTH)
+    local halfWidth = math.max((tonumber(padding) or 0) * 0.5, ROTATION_CONFIG.ringMinHalfWidth)
     local outerRadius = radius + halfWidth
     local innerRadius = resolvedRingInnerRadius(math.max(radius - halfWidth, 0.01), outerRadius)
     if innerRadius >= outerRadius then return end
@@ -1466,8 +1608,8 @@ local function drawRotationRingBand(origin, a, b, radius, padding, color, edgeCo
     local axisA = a:GetNormalized()
     local axisB = b:GetNormalized()
     local baseColor = color or color_white
-    local fill = cappedAlpha(baseColor, ROTATION_RING_FILL_ALPHA)
-    local edge = edgeColor or cappedAlpha(baseColor, ROTATION_RING_EDGE_ALPHA)
+    local fill = cappedAlpha(baseColor, ROTATION_CONFIG.ringFillAlpha)
+    local edge = edgeColor or cappedAlpha(baseColor, ROTATION_CONFIG.ringEdgeAlpha)
     local segments = ringRenderSegments(settings)
     local cachedRingRtSize = ringRtSize(settings)
 
@@ -1496,13 +1638,13 @@ local function drawRotationDeltaSector(origin, a, b, radius, padding, startAngle
     if math.abs(delta) <= 0.05 then return end
 
     local ringPadding = tonumber(padding) or 0
-    local bandHalfWidth = math.max(ringPadding * 0.5, ROTATION_RING_MIN_HALF_WIDTH)
+    local bandHalfWidth = math.max(ringPadding * 0.5, ROTATION_CONFIG.ringMinHalfWidth)
     local gap = math.max(ringPadding * 0.16, 0.03)
     local discRadius = math.max(radius - bandHalfWidth - gap, 0.01)
     local axisA = a:GetNormalized()
     local axisB = b:GetNormalized()
-    local fill = cappedAlpha(color or color_white, ROTATION_DELTA_SECTOR_ALPHA)
-    local edge = cappedAlpha(color or color_white, ROTATION_DELTA_SECTOR_EDGE_ALPHA)
+    local fill = cappedAlpha(color or color_white, ROTATION_CONFIG.deltaSectorAlpha)
+    local edge = cappedAlpha(color or color_white, ROTATION_CONFIG.deltaSectorEdgeAlpha)
     local segmentsPerCircle = ringRenderSegments(settings)
     local segments = math.Clamp(math.ceil(math.abs(delta) / 360 * segmentsPerCircle), 1, segmentsPerCircle)
     local cachedRingRtSize = ringRtSize(settings)
@@ -1584,7 +1726,7 @@ end
 
 local function activeTranslationSnapStep(tool, state)
     local fallback = tool and tool.GetClientInfo and tonumber(tool:GetClientInfo("translation_snap")) or nil
-    local step = translationSnapStep and translationSnapStep(tool) or math.Clamp(tonumber(fallback) or 0, 0, 62)
+    local step = client.translationSnapStep(tool) or math.Clamp(tonumber(fallback) or 0, 0, 62)
     if step <= 0 then return 0 end
 
     local settings = state and state.hover and state.hover.settings
@@ -1608,7 +1750,7 @@ local function currentTranslationLocalPos(press)
         return press.dragStartLocal
     end
 
-    return VectorP(0, 0, 0)
+    return ZERO_VEC
 end
 
 local function translationSnapOverlayColor(press)
@@ -1633,7 +1775,7 @@ local function drawTranslationAxisTicks(press, size, step, spriteSettings, viewe
 
     local currentLocal = currentTranslationLocalPos(press)
     local currentIndex = math.Round(componentForAxisKey(currentLocal, press.gizmo.key) / step)
-    local halfWindow = math.floor(TRANSLATION_SNAP_AXIS_TICK_COUNT * 0.5)
+    local halfWindow = math.floor(TRANSLATION_CONFIG.axisTickCount * 0.5)
     local minIndex = currentIndex - halfWindow
     local maxIndex = currentIndex + halfWindow
     local baseColor = translationSnapOverlayColor(press)
@@ -1665,10 +1807,10 @@ local function drawTranslationPlaneGrid(press, size, step, spriteSettings, viewe
     local currentLocal = currentTranslationLocalPos(press)
     local currentIndexA = math.Round(componentForAxisKey(currentLocal, first) / step)
     local currentIndexB = math.Round(componentForAxisKey(currentLocal, second) / step)
-    local minA = currentIndexA - TRANSLATION_SNAP_GRID_HALF_CELLS
-    local maxA = currentIndexA + TRANSLATION_SNAP_GRID_HALF_CELLS
-    local minB = currentIndexB - TRANSLATION_SNAP_GRID_HALF_CELLS
-    local maxB = currentIndexB + TRANSLATION_SNAP_GRID_HALF_CELLS
+    local minA = currentIndexA - TRANSLATION_CONFIG.gridHalfCells
+    local maxA = currentIndexA + TRANSLATION_CONFIG.gridHalfCells
+    local minB = currentIndexB - TRANSLATION_CONFIG.gridHalfCells
+    local maxB = currentIndexB + TRANSLATION_CONFIG.gridHalfCells
     local baseColor = translationSnapOverlayColor(press)
 
     for index = minA, maxA do
@@ -1717,6 +1859,8 @@ local function drawTranslationSnapOverlay(tool, state, g, spriteSettings, viewer
         drawTranslationPlaneGrid(press, size, step, spriteSettings, viewerPos)
     end
 end
+
+local reusablePointWorldPositions = {}
 
 local function drawDoubleSidedPlaneSquare(worldPos, axisA, axisB, halfSize, outline, preferredNormal)
     if not isvector(worldPos) or not isvector(axisA) or not isvector(axisB) then return end
@@ -1855,12 +1999,14 @@ local function drawTexturedTriangle(a, b, c, uvA, uvB, uvC, color, material)
     mesh.End()
 end
 
+local reusableTriangleUV = { {}, {}, {} }
+
 ensureStripePatternMaterial = function()
     if not stripePatternTexture then
         stripePatternTexture = GetRenderTargetEx(
-            STRIPE_PATTERN_NAME .. "_rt",
-            STRIPE_PATTERN_RT_SIZE,
-            STRIPE_PATTERN_RT_SIZE,
+        STRIPE_CONFIG.patternName .. "_rt",
+        STRIPE_CONFIG.rtSize,
+        STRIPE_CONFIG.rtSize,
             RT_SIZE_NO_CHANGE,
             MATERIAL_RT_DEPTH_NONE,
             0,
@@ -1871,9 +2017,9 @@ ensureStripePatternMaterial = function()
 
     if not stripeTrianglePatternTexture then
         stripeTrianglePatternTexture = GetRenderTargetEx(
-            STRIPE_PATTERN_NAME .. "_triangle_rt",
-            STRIPE_PATTERN_RT_SIZE,
-            STRIPE_PATTERN_RT_SIZE,
+        STRIPE_CONFIG.patternName .. "_triangle_rt",
+        STRIPE_CONFIG.rtSize,
+        STRIPE_CONFIG.rtSize,
             RT_SIZE_NO_CHANGE,
             MATERIAL_RT_DEPTH_NONE,
             0,
@@ -1883,7 +2029,7 @@ ensureStripePatternMaterial = function()
     end
 
     if not stripePatternMaterial then
-        stripePatternMaterial = CreateMaterial(STRIPE_PATTERN_NAME .. "_mat", "UnlitGeneric", {
+    stripePatternMaterial = CreateMaterial(STRIPE_CONFIG.patternName .. "_mat", "UnlitGeneric", {
             ["$basetexture"] = stripePatternTexture:GetName(),
             ["$translucent"] = "1",
             ["$additive"] = "1",
@@ -1894,7 +2040,7 @@ ensureStripePatternMaterial = function()
     end
 
     if not stripeTrianglePatternMaterial then
-        stripeTrianglePatternMaterial = CreateMaterial(STRIPE_PATTERN_NAME .. "_triangle_mat", "UnlitGeneric", {
+    stripeTrianglePatternMaterial = CreateMaterial(STRIPE_CONFIG.patternName .. "_triangle_mat", "UnlitGeneric", {
             ["$basetexture"] = stripeTrianglePatternTexture:GetName(),
             ["$translucent"] = "1",
             ["$additive"] = "1",
@@ -1905,7 +2051,7 @@ ensureStripePatternMaterial = function()
     end
 
     if not stripePatternScreenMaterial then
-        stripePatternScreenMaterial = CreateMaterial(STRIPE_PATTERN_NAME .. "_screen_mat", "UnlitGeneric", {
+    stripePatternScreenMaterial = CreateMaterial(STRIPE_CONFIG.patternName .. "_screen_mat", "UnlitGeneric", {
             ["$basetexture"] = stripePatternTexture:GetName(),
             ["$translucent"] = "1",
             ["$additive"] = "1",
@@ -1918,12 +2064,12 @@ ensureStripePatternMaterial = function()
     stripeTrianglePatternMaterial:SetTexture("$basetexture", stripeTrianglePatternTexture)
     stripePatternScreenMaterial:SetTexture("$basetexture", stripePatternTexture)
     local materialFlags = stripePatternMaterial:GetInt("$flags") or 0
-    local requiredFlags = bit.bor(materialFlags, STRIPE_PATTERN_MATERIAL_FLAGS)
+    local requiredFlags = bit.bor(materialFlags, STRIPE_CONFIG.materialFlags)
     if materialFlags ~= requiredFlags then
         stripePatternMaterial:SetInt("$flags", requiredFlags)
     end
     materialFlags = stripeTrianglePatternMaterial:GetInt("$flags") or 0
-    requiredFlags = bit.bor(materialFlags, STRIPE_PATTERN_MATERIAL_FLAGS)
+    requiredFlags = bit.bor(materialFlags, STRIPE_CONFIG.materialFlags)
     if materialFlags ~= requiredFlags then
         stripeTrianglePatternMaterial:SetInt("$flags", requiredFlags)
     end
@@ -1936,9 +2082,9 @@ ensureStripePatternMaterial = function()
         cam.Start2D()
             -- Named render targets survive Lua refreshes; copy exact intensity values into the RT.
             setStripePatternCopyBlend(true)
-            drawStripePatternRect(0, 0, 0, STRIPE_PATTERN_RT_SIZE, STRIPE_PATTERN_RT_SIZE)
-            drawStripePatternRect(STRIPE_PATTERN_FILL_ALPHA, 0, 0, STRIPE_PATTERN_RT_SIZE, STRIPE_PATTERN_RT_SIZE)
-            drawStripePatternRect(STRIPE_PATTERN_STRIPE_ALPHA, 0, 0, STRIPE_PATTERN_RT_SIZE, stripeSize)
+        drawStripePatternRect(0, 0, 0, STRIPE_CONFIG.rtSize, STRIPE_CONFIG.rtSize)
+        drawStripePatternRect(STRIPE_CONFIG.fillAlpha, 0, 0, STRIPE_CONFIG.rtSize, STRIPE_CONFIG.rtSize)
+        drawStripePatternRect(STRIPE_CONFIG.stripeAlpha, 0, 0, STRIPE_CONFIG.rtSize, stripeSize)
             setStripePatternCopyBlend(false)
         cam.End2D()
         render.PopRenderTarget()
@@ -1947,9 +2093,9 @@ ensureStripePatternMaterial = function()
         render.Clear(0, 0, 0, 0, true, true)
         cam.Start2D()
             setStripePatternCopyBlend(true)
-            drawStripePatternRect(0, 0, 0, STRIPE_PATTERN_RT_SIZE, STRIPE_PATTERN_RT_SIZE)
-            drawStripePatternRect(STRIPE_PATTERN_FILL_ALPHA, 0, 0, STRIPE_PATTERN_RT_SIZE, STRIPE_PATTERN_RT_SIZE)
-            drawStripePatternDiagonal(STRIPE_PATTERN_STRIPE_ALPHA)
+        drawStripePatternRect(0, 0, 0, STRIPE_CONFIG.rtSize, STRIPE_CONFIG.rtSize)
+        drawStripePatternRect(STRIPE_CONFIG.fillAlpha, 0, 0, STRIPE_CONFIG.rtSize, STRIPE_CONFIG.rtSize)
+        drawStripePatternDiagonal(STRIPE_CONFIG.stripeAlpha)
             setStripePatternCopyBlend(false)
         cam.End2D()
         render.PopRenderTarget()
@@ -1963,10 +2109,10 @@ end
 local function queueStripePatternRebuild()
     stripePatternReady = false
 
-    hook.Remove("PostRender", STRIPE_PATTERN_REBUILD_HOOK)
-    hook.Add("PostRender", STRIPE_PATTERN_REBUILD_HOOK, function()
+    hook.Remove("PostRender", STRIPE_CONFIG.rebuildHook)
+    hook.Add("PostRender", STRIPE_CONFIG.rebuildHook, function()
         ensureStripePatternMaterial()
-        hook.Remove("PostRender", STRIPE_PATTERN_REBUILD_HOOK)
+        hook.Remove("PostRender", STRIPE_CONFIG.rebuildHook)
     end)
 end
 
@@ -1974,12 +2120,12 @@ queueStripePatternRebuild()
 
 if cvars and cvars.AddChangeCallback then
     if cvars.RemoveChangeCallback then
-        cvars.RemoveChangeCallback(RING_QUALITY_CVAR, SHAPE_CACHE_REBUILD_CALLBACK)
+    cvars.RemoveChangeCallback(RENDER_CONFIG.ringQualityCvar, SHAPE_CONFIG.rebuildCallback)
     end
 
-    cvars.AddChangeCallback(RING_QUALITY_CVAR, function()
+    cvars.AddChangeCallback(RENDER_CONFIG.ringQualityCvar, function()
         queueShapeCacheWarmup()
-    end, SHAPE_CACHE_REBUILD_CALLBACK)
+    end, SHAPE_CONFIG.rebuildCallback)
 end
 
 queueShapeCacheWarmup()
@@ -1995,15 +2141,16 @@ local function drawStripedTriangle(a, b, c, frontColor, stripePhase, viewerPos)
 
     viewerPos = isvector(viewerPos)
         and viewerPos
-        or copyVec(IsValid(LocalPlayer()) and LocalPlayer():GetShootPos() or EyePos())
+        or setVec(shapeMetricCache.renderPerf.fallbackViewerPos, IsValid(LocalPlayer()) and LocalPlayer():GetShootPos() or EyePos())
+    shapeMetricCache.renderPerf.fallbackViewerPos = viewerPos
     local center = (a + b + c) / 3
     local frontFacing = normal:Dot(viewerPos - center) >= 0
     local visibleNormal = frontFacing and normal or -normal
     local push = visibleNormal * 0.08
     local tintColor = frontFacing
-        and Color(frontColor.r, frontColor.g, frontColor.b, 220)
-        or Color(155, 155, 155, 255)
-    local edgeColor = frontFacing and cappedAlpha(frontColor, 36) or Color(165, 165, 165, 32)
+        and cachedColor(frontColor.r, frontColor.g, frontColor.b, 220)
+        or cachedColor(155, 155, 155, 255)
+    local edgeColor = frontFacing and cappedAlpha(frontColor, 36) or cachedColor(165, 165, 165, 32)
 
     local pa = a + push
     local pb = b + push
@@ -2019,7 +2166,7 @@ local function drawStripedTriangle(a, b, c, frontColor, stripePhase, viewerPos)
     local cx = ac:Dot(u)
     local cy = vLen
     local distance = math.max(viewerPos:Distance(center), 1)
-    local tileSize = math.max(1, STRIPE_PATTERN_RT_SIZE * stripeDistanceScale(distance))
+    local tileSize = math.max(1, STRIPE_CONFIG.rtSize * stripeDistanceScale(distance))
     local centerScreen = center:ToScreen()
     local pixelsPerWorld = 0
     if centerScreen then
@@ -2029,7 +2176,7 @@ local function drawStripedTriangle(a, b, c, frontColor, stripePhase, viewerPos)
         ) * 0.5
     end
 
-    local stripePeriod = STRIPE_PATTERN_WORLD_TILE * math.sqrt(2)
+    local stripePeriod = STRIPE_CONFIG.worldTile * math.sqrt(2)
     if pixelsPerWorld > 1e-4 then
         stripePeriod = math.max(0.01, tileSize / pixelsPerWorld)
     end
@@ -2037,25 +2184,25 @@ local function drawStripedTriangle(a, b, c, frontColor, stripePhase, viewerPos)
     local stripeMaterial = ensureStripePatternMaterial()
 
     if stripeMaterial then
-        local function makeUV(x, y)
-            return {
-                u = x / stripePeriod,
-                v = y / stripePeriod - phase
-            }
-        end
+        reusableTriangleUV[1].u = 0
+        reusableTriangleUV[1].v = -phase
+        reusableTriangleUV[2].u = bx / stripePeriod
+        reusableTriangleUV[2].v = -phase
+        reusableTriangleUV[3].u = cx / stripePeriod
+        reusableTriangleUV[3].v = cy / stripePeriod - phase
 
         drawTexturedTriangle(
             pa,
             pb,
             pc,
-            makeUV(0, 0),
-            makeUV(bx, 0),
-            makeUV(cx, cy),
-            scaledAlphaColor(tintColor, STRIPE_TRIANGLE_ALPHA_SCALE),
+            reusableTriangleUV[1],
+            reusableTriangleUV[2],
+            reusableTriangleUV[3],
+            scaledAlphaColor(tintColor, STRIPE_CONFIG.triangleAlphaScale),
             stripeMaterial
         )
     else
-        drawFilledTriangle(pa, pb, pc, frontFacing and cappedAlpha(frontColor, STRIPE_PATTERN_FILL_ALPHA) or Color(105, 105, 105, STRIPE_PATTERN_FILL_ALPHA))
+        drawFilledTriangle(pa, pb, pc, frontFacing and cappedAlpha(frontColor, STRIPE_CONFIG.fillAlpha) or Color(105, 105, 105, STRIPE_CONFIG.fillAlpha))
     end
 
     drawLine(pa, pb, edgeColor, false)
@@ -2075,7 +2222,8 @@ local function drawAxisArrow(startPos, endPos, color, viewerPos)
     local center = (startPos + endPos) * 0.5
     viewerPos = isvector(viewerPos)
         and viewerPos
-        or copyVec(IsValid(LocalPlayer()) and LocalPlayer():GetShootPos() or EyePos())
+        or setVec(shapeMetricCache.renderPerf.fallbackViewerPos, IsValid(LocalPlayer()) and LocalPlayer():GetShootPos() or EyePos())
+    shapeMetricCache.renderPerf.fallbackViewerPos = viewerPos
     local toViewer = viewerPos - center
     local width = axis:Cross(toViewer)
     if width:LengthSqr() < 1e-8 then
@@ -2105,7 +2253,7 @@ local function drawAxisArrow(startPos, endPos, color, viewerPos)
     local headRight = headBase + width * headHalf + push
     local tip = endPos + push
     local fill = cappedAlpha(color, 225)
-    local outline = Color(
+    local outline = cachedColor(
         math.min(color.r + 55, 255),
         math.min(color.g + 55, 255),
         math.min(color.b + 55, 255),
@@ -2123,46 +2271,89 @@ local function drawAxisArrow(startPos, endPos, color, viewerPos)
     drawLine(headLeft, headRight, outline, true)
 end
 
+local function drawFrame(pos, ang, size, alpha)
+    render.DrawLine(toVector(pos), toVector(pos + ang:Forward() * size), cachedColor(colors.x.r, colors.x.g, colors.x.b, alpha), true)
+    render.DrawLine(toVector(pos), toVector(pos + ang:Right() * size), cachedColor(colors.y.r, colors.y.g, colors.y.b, alpha), true)
+    render.DrawLine(toVector(pos), toVector(pos + ang:Up() * size), cachedColor(colors.z.r, colors.z.g, colors.z.b, alpha), true)
+end
+
+local function shouldDrawPointTriangle(spriteSettings)
+    return not (spriteSettings and spriteSettings.hidePointTriangles == true)
+end
+
+local function anchorPercent(options, key)
+    return ((options and options[key .. "_pct"]) or M.ANCHOR_PERCENT_DEFAULT) * 0.01
+end
+
+local function lerpPointFast(a, b, t)
+    return VectorP(
+        a.x + (b.x - a.x) * t,
+        a.y + (b.y - a.y) * t,
+        a.z + (b.z - a.z) * t
+    )
+end
+
+local function anchorPointFast(points, id, options)
+    local p1, p2, p3 = points[1], points[2], points[3]
+
+    if id == "p1" then return p1 end
+    if id == "p2" then return p2 end
+    if id == "p3" then return p3 end
+    if id == "mid12" and p1 and p2 then return lerpPointFast(p1, p2, anchorPercent(options, "mid12")) end
+    if id == "mid23" and p2 and p3 then return lerpPointFast(p2, p3, anchorPercent(options, "mid23")) end
+    if id == "mid13" and p1 and p3 then return lerpPointFast(p1, p3, anchorPercent(options, "mid13")) end
+
+    if id == M.ANCHOR_CENTER_ID and p1 and p2 and p3 then
+        local m12 = lerpPointFast(p1, p2, anchorPercent(options, "mid12"))
+        local m23 = lerpPointFast(p2, p3, anchorPercent(options, "mid23"))
+        local m13 = lerpPointFast(p1, p3, anchorPercent(options, "mid13"))
+
+        return VectorP(
+            (m12.x + m23.x + m13.x) / 3,
+            (m12.y + m23.y + m13.y) / 3,
+            (m12.z + m23.z + m13.z) / 3
+        )
+    end
+end
+
 local function drawPointSet(ent, points, color, posOverride, angOverride, stripePhase, triangleColor, anchorConfig, spriteSettings, viewerPos)
     if #points < 1 then return end
 
     local basePos, baseAng
     if isvector(posOverride) and isangle(angOverride) then
         basePos, baseAng = posOverride, angOverride
-    elseif isWorldTarget and isWorldTarget(ent) then
-        basePos, baseAng = VectorP(0, 0, 0), AngleP(0, 0, 0)
+    elseif M.IsWorldTarget and M.IsWorldTarget(ent) then
+        basePos, baseAng = ZERO_VEC, ZERO_ANG
     elseif IsValid(ent) then
         basePos, baseAng = ent:GetPos(), ent:GetAngles()
     else
         return
     end
 
-    local worldPoints = {}
+    local worldPoints = reusablePointWorldPositions
     for i = 1, #points do
-        worldPoints[i] = LocalToWorldPrecise(points[i], AngleP(0, 0, 0), basePos, baseAng)
+        worldPoints[i] = LocalToWorldPosPrecise(points[i], basePos, baseAng)
+    end
+    for i = #points + 1, #worldPoints do
+        worldPoints[i] = nil
     end
 
-    if worldPoints[1] and worldPoints[2] and worldPoints[3] then
+    if shouldDrawPointTriangle(spriteSettings) and worldPoints[1] and worldPoints[2] and worldPoints[3] then
         drawStripedTriangle(worldPoints[1], worldPoints[2], worldPoints[3], triangleColor or color, stripePhase, viewerPos)
     end
 
     local mainRadius = 1.35
     local midRadius = mainRadius * 0.5
-    local resolvedAnchorConfig = M.NormalizeAnchorOptions and M.NormalizeAnchorOptions(anchorConfig) or anchorConfig
-    local function lerpWorld(a, b, key)
-        if not isvector(a) or not isvector(b) then return end
+    local function anchorWorldPos(id)
+        local localPos = anchorPointFast(points, id, anchorConfig)
+        if not isvector(localPos) then return end
 
-        local percent = resolvedAnchorConfig and resolvedAnchorConfig[key] or M.ANCHOR_PERCENT_DEFAULT
-        local t = (tonumber(percent) or M.ANCHOR_PERCENT_DEFAULT) * 0.01
-        return M.AddVectorsPrecise(
-            M.ScaleVectorPrecise(a, 1 - t),
-            M.ScaleVectorPrecise(b, t)
-        )
+        return LocalToWorldPosPrecise(localPos, basePos, baseAng)
     end
 
-    local mid12World = lerpWorld(worldPoints[1], worldPoints[2], "mid12_pct")
-    local mid23World = lerpWorld(worldPoints[2], worldPoints[3], "mid23_pct")
-    local mid13World = lerpWorld(worldPoints[1], worldPoints[3], "mid13_pct")
+    local mid12World = anchorWorldPos("mid12")
+    local mid23World = anchorWorldPos("mid23")
+    local mid13World = anchorWorldPos("mid13")
 
     if worldPoints[2] and worldPoints[3] then
         drawLine(worldPoints[2], worldPoints[3], cappedAlpha(color, 170), true)
@@ -2172,25 +2363,22 @@ local function drawPointSet(ent, points, color, posOverride, angOverride, stripe
     end
 
     if mid12World then
-        drawCircleSprite(mid12World, midRadius, cappedAlpha(color, 185), spriteSettings, viewerPos, true)
+        drawCircleSprite(mid12World, midRadius, cappedAlpha(color, 185), spriteSettings, viewerPos)
     end
     if mid23World then
-        drawCircleSprite(mid23World, midRadius, cappedAlpha(color, 185), spriteSettings, viewerPos, true)
+        drawCircleSprite(mid23World, midRadius, cappedAlpha(color, 185), spriteSettings, viewerPos)
     end
     if mid13World then
-        drawCircleSprite(mid13World, midRadius, cappedAlpha(color, 185), spriteSettings, viewerPos, true)
+        drawCircleSprite(mid13World, midRadius, cappedAlpha(color, 185), spriteSettings, viewerPos)
     end
 
-    local centerWorld
-    if mid12World and mid23World and mid13World then
-        centerWorld = M.ScaleVectorPrecise(M.AddVectorsPrecise(M.AddVectorsPrecise(mid12World, mid23World), mid13World), 1 / 3)
-    end
+    local centerWorld = anchorWorldPos(M.ANCHOR_CENTER_ID)
     if centerWorld then
-        drawCircleSprite(centerWorld, midRadius * 0.9, cappedAlpha(color, 165), spriteSettings, viewerPos, true)
+        drawCircleSprite(centerWorld, midRadius * 0.9, cappedAlpha(color, 165), spriteSettings, viewerPos)
     end
 
     for i = 1, #worldPoints do
-        drawCircleSprite(worldPoints[i], mainRadius, color, spriteSettings, viewerPos, true)
+        drawCircleSprite(worldPoints[i], mainRadius, color, spriteSettings, viewerPos)
     end
 
     if worldPoints[1] and worldPoints[2] then
@@ -2200,8 +2388,8 @@ end
 
 local function drawPoints(ent, points, color, anchorId, anchorConfig)
     local basePos, baseAng
-    if isWorldTarget and isWorldTarget(ent) then
-        basePos, baseAng = VectorP(0, 0, 0), AngleP(0, 0, 0)
+    if M.IsWorldTarget and M.IsWorldTarget(ent) then
+        basePos, baseAng = ZERO_VEC, ZERO_ANG
     elseif IsValid(ent) then
         basePos, baseAng = ent:GetPos(), ent:GetAngles()
     else
@@ -2209,7 +2397,7 @@ local function drawPoints(ent, points, color, anchorId, anchorConfig)
     end
 
     for i = 1, #points do
-        local world = LocalToWorldPrecise(points[i], AngleP(0, 0, 0), basePos, baseAng)
+        local world = LocalToWorldPosPrecise(points[i], basePos, baseAng)
         local screen = world:ToScreen()
         if screen.visible then
             draw.SimpleTextOutlined("P" .. i, "DermaDefault", screen.x + 8, screen.y - 8, color, TEXT_ALIGN_LEFT, TEXT_ALIGN_BOTTOM, 1, color_black)
@@ -2218,10 +2406,10 @@ local function drawPoints(ent, points, color, anchorId, anchorConfig)
 
     if not anchorId then return end
 
-    local anchor = M.AnchorPoint(points, anchorId, anchorConfig)
+    local anchor = anchorPointFast(points, anchorId, anchorConfig)
     if not anchor then return end
 
-    local world = LocalToWorldPrecise(anchor, AngleP(0, 0, 0), basePos, baseAng)
+    local world = LocalToWorldPosPrecise(anchor, basePos, baseAng)
     local screen = world:ToScreen()
     if screen.visible then
         draw.SimpleTextOutlined("A", "DermaDefault", screen.x, screen.y, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER, 1, color_black)
@@ -2278,10 +2466,133 @@ local function activePickAccentColor(state)
     return sideAccentColor(press.side)
 end
 
+local hoverRender = {}
+
+function hoverRender.drawGridLabels(state, candidate)
+    if not shouldRenderHoverGrid(state, candidate) then return end
+
+    local face = candidate.face
+    local labelColor = cachedColor(255, 255, 255, GRID_CONFIG.snapLabelAlpha)
+
+    if face.snapGridU and face.uSnap then
+        local a, b = faceLineWorldPoints(candidate.ent, face, face.snapGridU, "u", face.uSnap)
+        if a and b then
+            drawSnapLineLabels2D(a, b, formatGridLineLabel(face, "u"), labelColor)
+        end
+    end
+
+    if face.snapGridV and face.vSnap then
+        local a, b = faceLineWorldPoints(candidate.ent, face, face.snapGridV, "v", face.vSnap)
+        if a and b then
+            drawSnapLineLabels2D(a, b, formatGridLineLabel(face, "v"), labelColor)
+        end
+    end
+end
+
+function hoverRender.drawFaceOutline(state, candidate)
+    if not shouldRenderHoverFace(state, candidate) then return end
+
+    local face = candidate.face
+    local ent = candidate.ent
+    local corners = face.corners
+    local entPos = ent:GetPos()
+    local entAng = ent:GetAngles()
+
+    for i = 1, 4 do
+        drawLine(
+            LocalToWorldPosPrecise(corners[i], entPos, entAng),
+            LocalToWorldPosPrecise(corners[i % 4 + 1], entPos, entAng),
+            cachedColor(255, 255, 255, 70),
+            true
+        )
+    end
+end
+
+function hoverRender.drawGrid(state, candidate)
+    if not shouldRenderHoverGrid(state, candidate) then return end
+
+    local face = candidate.face
+    local ent = candidate.ent
+    local renderPerf = shapeMetricCache.renderPerf
+    local gridSets = renderPerf.reusableGridSets or {}
+    local seen = renderPerf.reusableGridSeen or {}
+    renderPerf.reusableGridSets = gridSets
+    renderPerf.reusableGridSeen = seen
+    for i = 1, #gridSets do
+        gridSets[i] = nil
+    end
+    for grid in pairs(seen) do
+        seen[grid] = nil
+    end
+
+    local function addGrid(grid)
+        if not grid or seen[grid] then return end
+        seen[grid] = true
+        gridSets[#gridSets + 1] = grid
+    end
+
+    addGrid(face.gridA)
+    addGrid(face.gridB)
+    addGrid(face.snapGridU)
+    addGrid(face.snapGridV)
+
+    for _, grid in ipairs(gridSets) do
+        local lineAlpha = currentGridLineAlpha(grid == face.gridA)
+
+        for uIndex = 0, math.max(grid.divU or 0, 0) do
+            local u = uIndex == (grid.divU or 0) and grid.uMax or (grid.uMin + grid.stepU * uIndex)
+            local a, b = faceLineWorldPoints(ent, face, grid, "u", u)
+            if a and b then
+                drawLine(a, b, cachedColor(255, 255, 255, lineAlpha), false)
+            end
+        end
+
+        for vIndex = 0, math.max(grid.divV or 0, 0) do
+            local v = vIndex == (grid.divV or 0) and grid.vMax or (grid.vMin + grid.stepV * vIndex)
+            local a, b = faceLineWorldPoints(ent, face, grid, "v", v)
+            if a and b then
+                drawLine(a, b, cachedColor(255, 255, 255, lineAlpha), false)
+            end
+        end
+    end
+
+    if face.snapGridU and face.uSnap then
+        local a, b = faceLineWorldPoints(ent, face, face.snapGridU, "u", face.uSnap)
+        if a and b then
+            drawLine(a, b, cachedColor(255, 255, 255, GRID_CONFIG.snapLineAlpha), false)
+        end
+    end
+
+    if face.snapGridV and face.vSnap then
+        local a, b = faceLineWorldPoints(ent, face, face.snapGridV, "v", face.vSnap)
+        if a and b then
+            drawLine(a, b, cachedColor(255, 255, 255, GRID_CONFIG.snapLineAlpha), false)
+        end
+    end
+end
+
+local function clearReusableEntries(entries, lastUsed)
+    if not istable(entries) then return end
+
+    for i = (tonumber(lastUsed) or 0) + 1, #entries do
+        entries[i] = nil
+    end
+end
+
+local function reusableEntry(entries, index)
+    local entry = entries[index]
+    if not istable(entry) then
+        entry = {}
+        entries[index] = entry
+    end
+
+    return entry
+end
+
 function TOOL:DrawHUD()
-    local tool, state = activeTool()
+    local tool, state = client.activeTool()
     if tool ~= self then return end
-    if validateState and not validateState(self, state) then return end
+    if not client.validateState(self, state) then return end
 
     local hoverCandidate = state.hover and (state.hover.candidate or state.hover.overlay)
     local sourceAnchorOptions = anchorOptions(tool, "from")
@@ -2289,31 +2600,13 @@ function TOOL:DrawHUD()
 
     drawPoints(state.prop1, state.source, colors.source, state.preview and state.preview.solve and state.preview.solve.sourceAnchorId, sourceAnchorOptions)
     drawPoints(state.prop2, state.target, colors.target, state.preview and state.preview.solve and state.preview.solve.targetAnchorId, targetAnchorOptions)
-
-    if shouldRenderHoverGrid(state, hoverCandidate) then
-        local face = hoverCandidate.face
-        local labelColor = Color(255, 255, 255, SNAP_LABEL_ALPHA)
-
-        if face.snapGridU and face.uSnap then
-            local a, b = faceLineWorldPoints(hoverCandidate.ent, face, face.snapGridU, "u", face.uSnap)
-            if a and b then
-                drawSnapLineLabels2D(a, b, formatGridLineLabel(face, "u"), labelColor)
-            end
-        end
-
-        if face.snapGridV and face.vSnap then
-            local a, b = faceLineWorldPoints(hoverCandidate.ent, face, face.snapGridV, "v", face.vSnap)
-            if a and b then
-                drawSnapLineLabels2D(a, b, formatGridLineLabel(face, "v"), labelColor)
-            end
-        end
-    end
+    hoverRender.drawGridLabels(state, hoverCandidate)
 end
 
 hook.Add("PostDrawTranslucentRenderables", "magic_align_draw", function(bDrawingDepth, bDrawingSkybox)
     if bDrawingDepth or bDrawingSkybox then return end
 
-    local tool, state = activeTool()
+    local tool, state = client.activeTool()
     if not tool then
         if M.ClientState and IsValid(M.ClientState.ghost) then
             M.ClientState.ghost:SetNoDraw(true)
@@ -2327,25 +2620,45 @@ hook.Add("PostDrawTranslucentRenderables", "magic_align_draw", function(bDrawing
         end
         return
     end
-    if validateState and not validateState(tool, state) then return end
+    if not client.validateState(tool, state) then return end
 
     local markerColor = selectionColor(state)
-    local wireMarkers = {
-        { ent = state.prop1, color = markerColor, alpha = 72 },
-        { ent = state.prop2, color = colors.target, alpha = 72 }
-    }
+    local wireMarkers = shapeMetricCache.renderPerf.reusableWireMarkers or {}
+    shapeMetricCache.renderPerf.reusableWireMarkers = wireMarkers
+
+    local wireMarkerCount = 0
+    wireMarkerCount = wireMarkerCount + 1
+    local sourceMarker = reusableEntry(wireMarkers, wireMarkerCount)
+    sourceMarker.ent = state.prop1
+    sourceMarker.color = markerColor
+    sourceMarker.alpha = 72
+
+    wireMarkerCount = wireMarkerCount + 1
+    local targetMarker = reusableEntry(wireMarkers, wireMarkerCount)
+    targetMarker.ent = state.prop2
+    targetMarker.color = colors.target
+    targetMarker.alpha = 72
+
     for i = 1, #(state.linked or {}) do
-        wireMarkers[#wireMarkers + 1] = { ent = state.linked[i], color = markerColor, alpha = 34 }
+        wireMarkerCount = wireMarkerCount + 1
+        local linkedMarker = reusableEntry(wireMarkers, wireMarkerCount)
+        linkedMarker.ent = state.linked[i]
+        linkedMarker.color = markerColor
+        linkedMarker.alpha = 34
     end
+    clearReusableEntries(wireMarkers, wireMarkerCount)
     shapeMetricCache.renderPerf.drawWireMarkerBatch(wireMarkers, true)
 
-    local ghostEntries = {}
+    local ghostEntries = shapeMetricCache.renderPerf.reusableGhostEntries or {}
+    shapeMetricCache.renderPerf.reusableGhostEntries = ghostEntries
+    ghostEntries._magicAlignCount = 0
     shapeMetricCache.renderPerf.addGhostRenderEntry(ghostEntries, state.ghost, 0.08, 0.65)
     if istable(state.linkedGhosts) then
         for _, ghost in pairs(state.linkedGhosts) do
             shapeMetricCache.renderPerf.addGhostRenderEntry(ghostEntries, ghost, 0.05, 0.38)
         end
     end
+    clearReusableEntries(ghostEntries, ghostEntries._magicAlignCount)
 
     if previewOccludedEnabled(tool) then
         for i = 1, #ghostEntries do
@@ -2361,63 +2674,12 @@ hook.Add("PostDrawTranslucentRenderables", "magic_align_draw", function(bDrawing
     local sourceAnchorOptions = anchorOptions(tool, "from")
     local targetAnchorOptions = anchorOptions(tool, "to")
     local spriteSettings = ringRenderSettingsForTool(tool)
-    local viewerPos = copyVec(IsValid(LocalPlayer()) and LocalPlayer():GetShootPos() or EyePos())
+    local viewerPos = setVec(shapeMetricCache.renderPerf.viewerPos, IsValid(LocalPlayer()) and LocalPlayer():GetShootPos() or EyePos())
+    shapeMetricCache.renderPerf.viewerPos = viewerPos
     cam.IgnoreZ(true)
 
-    if shouldRenderHoverFace(state, hoverCandidate) then
-        local face = hoverCandidate.face
-        local ent = hoverCandidate.ent
-        local corners = face.corners
-
-        for i = 1, 4 do
-            drawLine(
-                LocalToWorldPrecise(corners[i], AngleP(0, 0, 0), ent:GetPos(), ent:GetAngles()),
-                LocalToWorldPrecise(corners[i % 4 + 1], AngleP(0, 0, 0), ent:GetPos(), ent:GetAngles()),
-                Color(255, 255, 255, 70),
-                true
-            )
-        end
-    end
-
-    if shouldRenderHoverGrid(state, hoverCandidate) then
-        local face = hoverCandidate.face
-        local ent = hoverCandidate.ent
-        local gridSets = { face.gridA, face.gridB }
-
-        for _, grid in ipairs(gridSets) do
-            if grid then
-                for uIndex = 0, math.max(grid.divU or 0, 0) do
-                    local u = uIndex == (grid.divU or 0) and grid.uMax or (grid.uMin + grid.stepU * uIndex)
-                    local a, b = faceLineWorldPoints(ent, face, grid, "u", u)
-                    if a and b then
-                        drawLine(a, b, Color(255, 255, 255, grid == face.gridA and GRID_ALPHA_PRIMARY or GRID_ALPHA_SECONDARY), false)
-                    end
-                end
-
-                for vIndex = 0, math.max(grid.divV or 0, 0) do
-                    local v = vIndex == (grid.divV or 0) and grid.vMax or (grid.vMin + grid.stepV * vIndex)
-                    local a, b = faceLineWorldPoints(ent, face, grid, "v", v)
-                    if a and b then
-                        drawLine(a, b, Color(255, 255, 255, grid == face.gridA and GRID_ALPHA_PRIMARY or GRID_ALPHA_SECONDARY), false)
-                    end
-                end
-            end
-        end
-
-        if face.snapGridU and face.uSnap then
-            local a, b = faceLineWorldPoints(ent, face, face.snapGridU, "u", face.uSnap)
-            if a and b then
-                drawLine(a, b, Color(255, 255, 255, SNAP_LINE_ALPHA), false)
-            end
-        end
-
-        if face.snapGridV and face.vSnap then
-            local a, b = faceLineWorldPoints(ent, face, face.snapGridV, "v", face.vSnap)
-            if a and b then
-                drawLine(a, b, Color(255, 255, 255, SNAP_LINE_ALPHA), false)
-            end
-        end
-    end
+    hoverRender.drawFaceOutline(state, hoverCandidate)
+    hoverRender.drawGrid(state, hoverCandidate)
 
     drawPointSet(state.prop1, state.source, colors.source, nil, nil, 0, nil, sourceAnchorOptions, spriteSettings, viewerPos)
     drawPointSet(state.prop2, state.target, colors.target, nil, nil, 0.5, nil, targetAnchorOptions, spriteSettings, viewerPos)
@@ -2425,11 +2687,11 @@ hook.Add("PostDrawTranslucentRenderables", "magic_align_draw", function(bDrawing
         drawPointSet(
             nil,
             state.source,
-            Color(120, 255, 150, 5),
+            cachedColor(120, 255, 150, 5),
             state.preview.pos,
             state.preview.ang,
             0,
-            Color(120, 255, 150, 128),
+            cachedColor(120, 255, 150, 128),
             sourceAnchorOptions,
             spriteSettings,
             viewerPos
@@ -2440,8 +2702,8 @@ hook.Add("PostDrawTranslucentRenderables", "magic_align_draw", function(bDrawing
         local samples = state.press.samples
         local pathColor = activePickAccentColor(state)
         for i = 2, #samples do
-            local a = sampleWorldPos and sampleWorldPos(state.press.ent, samples[i - 1]) or samples[i - 1].pos
-            local b = sampleWorldPos and sampleWorldPos(state.press.ent, samples[i]) or samples[i].pos
+            local a = client.sampleWorldPos(state.press.ent, samples[i - 1]) or samples[i - 1].pos
+            local b = client.sampleWorldPos(state.press.ent, samples[i]) or samples[i].pos
             if isvector(a) and isvector(b) then
                 drawLine(a, b, pathColor, true)
             end
@@ -2453,7 +2715,7 @@ hook.Add("PostDrawTranslucentRenderables", "magic_align_draw", function(bDrawing
             for i = 1, #state.press.aggregatedProbes do
                 local probe = state.press.aggregatedProbes[i]
                 if isvector(probe.localPos) then
-                    local worldPos = LocalToWorldPrecise(probe.localPos, AngleP(0, 0, 0), state.press.ent:GetPos(), state.press.ent:GetAngles())
+                    local worldPos = LocalToWorldPosPrecise(probe.localPos, state.press.ent:GetPos(), state.press.ent:GetAngles())
                     drawCircleSprite(worldPos, 0.22, colorAlpha(pathColor, 190), spriteSettings, viewerPos)
                 end
             end
@@ -2461,16 +2723,16 @@ hook.Add("PostDrawTranslucentRenderables", "magic_align_draw", function(bDrawing
     end
 
     if hoverCandidate and not isDrawingPickPress(state) then
-        drawCircleSprite(hoverCandidate.worldPos, 1.2, colorAlpha(colors.preview, 210), spriteSettings, viewerPos, true)
+            drawCircleSprite(hoverCandidate.worldPos, 1.2, colorAlpha(colors.preview, 210), spriteSettings, viewerPos)
     end
 
     if state.hover and state.hover.point then
-        drawRingSprite(state.hover.point.worldPos, 1.7, 0.55, color_white, spriteSettings, viewerPos)
+        drawRingSprite(state.hover.point.worldPos, 1.7, 0.55, color_white, spriteSettings, viewerPos, true)
     end
 
     if state.corner and isDrawingPickPress(state) then
         local cornerColor = activePickAccentColor(state)
-        drawCircleSprite(state.corner.worldPos, 1.05, colorAlpha(cornerColor, 215), spriteSettings, viewerPos, true)
+        drawCircleSprite(state.corner.worldPos, 1.05, colorAlpha(cornerColor, 215), spriteSettings, viewerPos)
         if isvector(state.corner.axisWorldDir) then
             local axisHalfLength = math.Clamp(IsValid(state.corner.ent) and state.corner.ent:BoundingRadius() * 0.18 or 12, 8, 28)
             drawLine(
@@ -2484,20 +2746,20 @@ hook.Add("PostDrawTranslucentRenderables", "magic_align_draw", function(bDrawing
     end
 
     if state.pending then
-        drawFrame(LocalToWorldPrecise(state.pending.solve.sourceAnchorLocal, AngleP(0, 0, 0), state.pending.pos, state.pending.ang), state.pending.ang, 10, 120)
+        drawFrame(LocalToWorldPosPrecise(state.pending.solve.sourceAnchorLocal, state.pending.pos, state.pending.ang), state.pending.ang, 10, 120)
     end
 
     if state.preview and state.preview.solve then
         local solve = state.preview.solve
-        local baseAnchor = LocalToWorldPrecise(solve.sourceAnchorLocal, AngleP(0, 0, 0), solve.pos, solve.ang)
-        local liveAnchor = LocalToWorldPrecise(solve.sourceAnchorLocal, AngleP(0, 0, 0), state.preview.pos, state.preview.ang)
-        local liveContext = LocalToWorldPrecise(solve.sourceContextLocal and solve.sourceContextLocal.pos or solve.sourceAnchorLocal, AngleP(0, 0, 0), state.preview.pos, state.preview.ang)
+        local baseAnchor = LocalToWorldPosPrecise(solve.sourceAnchorLocal, solve.pos, solve.ang)
+        local liveAnchor = LocalToWorldPosPrecise(solve.sourceAnchorLocal, state.preview.pos, state.preview.ang)
+        local liveContext = LocalToWorldPosPrecise(solve.sourceContextLocal and solve.sourceContextLocal.pos or solve.sourceAnchorLocal, state.preview.pos, state.preview.ang)
 
         drawFrame(baseAnchor, solve.ang, 12, 80)
         drawFrame(liveAnchor, state.preview.ang, 16, 220)
         drawFrame(liveContext, solve.axisAng, 8, 110)
 
-        local g = gizmo(tool, state)
+        local g = client.gizmo(tool, state)
         if g then
             local showRotation = g.disableRotation ~= true
             local axisHandleRadius = g.size * 0.09
@@ -2566,8 +2828,8 @@ hook.Add("PostDrawTranslucentRenderables", "magic_align_draw", function(bDrawing
                 }
                 local rotationSnapEnabled = not (input.IsKeyDown(KEY_LSHIFT) or input.IsKeyDown(KEY_RSHIFT))
                 local activeRotationKey = rotationSnapEnabled and g.hover and g.hover.kind == "rot" and g.hover.key or nil
-                local rotationDivisions = rotationSnapDivisions and rotationSnapDivisions(tool) or 24
-                local rotationStep = rotationSnapStep and rotationSnapStep(tool) or (360 / math.max(rotationDivisions, 1))
+                local rotationDivisions = client.rotationSnapDivisions(tool)
+                local rotationStep = client.rotationSnapStep(tool) or (360 / math.max(rotationDivisions, 1))
 
                 for _, item in ipairs(rotationRings) do
                     if shouldDrawHandle("rot", item.key) then
@@ -2625,7 +2887,7 @@ hook.Add("PostDrawTranslucentRenderables", "magic_align_draw", function(bDrawing
                         or g.hover.key == "y" and basisRight
                         or basisUp
                     drawLine(g.hover.a, g.hover.b - axisDir * axisHandleRadius, color_white, true)
-                    drawRingSprite(g.hover.b, g.size * 0.09, g.size * 0.022, color_white, ringRenderSettings, viewerPos)
+                    drawRingSprite(g.hover.b, g.size * 0.09, g.size * 0.022, color_white, ringRenderSettings, viewerPos, true)
                 elseif g.hover.kind == "plane" then
                     if g.hover.key == "xy" then
                         drawPlaneSquare(g.hover.center, basisForward, basisRight, g.size * 0.135, g.hover.color or colors.xy, color_white)
