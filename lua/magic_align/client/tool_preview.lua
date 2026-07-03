@@ -1421,6 +1421,265 @@ local function pendingPreview(tool, state)
     end
 end
 
+local function debugBool(value)
+    return value == true and "true" or value == false and "false" or tostring(value)
+end
+
+local function debugNumber(value)
+    value = tonumber(value)
+    return value and ("%.6g"):format(value) or "nil"
+end
+
+local function debugVec(value)
+    if not isvector(value) then return "nil" end
+    return ("%.3f %.3f %.3f"):format(value.x, value.y, value.z)
+end
+
+local function debugAng(value)
+    if not isangle(value) then return "nil" end
+    return ("%.3f %.3f %.3f"):format(value.p, value.y, value.r)
+end
+
+local function debugSafe(method, fallback)
+    if not isfunction(method) then return fallback end
+
+    local ok, value = pcall(method)
+    if ok then return value end
+
+    return fallback
+end
+
+local function debugEntity(ent)
+    if not IsValid(ent) then
+        return ("invalid(%s)"):format(tostring(ent))
+    end
+
+    local entIndex = isfunction(ent.EntIndex) and ent:EntIndex() or nil
+    local class = debugSafe(function() return ent:GetClass() end, "unknown")
+    local model = debugSafe(function() return ent:GetModel() end, nil)
+    local isWorld = debugSafe(function() return ent:IsWorld() end, false)
+
+    return ("ent=%s class=%s model=%s isWorld=%s isWorldTarget=%s isProp=%s isPrimitive=%s"):format(
+        tostring(entIndex),
+        tostring(class),
+        tostring(model),
+        debugBool(isWorld),
+        debugBool(geometry.isWorldTarget(ent)),
+        debugBool(M.IsProp(ent)),
+        debugBool(M.IsPrimitive and M.IsPrimitive(ent))
+    )
+end
+
+local function debugPhysics(ent)
+    if not IsValid(ent) then return "phys=nil" end
+
+    local phys = debugSafe(function() return ent:GetPhysicsObject() end, nil)
+    if not IsValid(phys) then return "phys=invalid" end
+
+    local motion = debugSafe(function()
+        return isfunction(phys.IsMotionEnabled) and phys:IsMotionEnabled() or nil
+    end, nil)
+    local collision = debugSafe(function()
+        return isfunction(phys.IsCollisionEnabled) and phys:IsCollisionEnabled() or nil
+    end, nil)
+
+    return ("phys=valid motion=%s collision=%s physPos=%s physAng=%s"):format(
+        debugBool(motion),
+        debugBool(collision),
+        debugVec(debugSafe(function() return phys:GetPos() end, nil)),
+        debugAng(debugSafe(function() return phys:GetAngles() end, nil))
+    )
+end
+
+local function debugTrace(label, tr)
+    if not tr then
+        print(("[Magic Align eyetrace debug] %s: nil"):format(label))
+        return
+    end
+
+    print(("[Magic Align eyetrace debug] %s: hit=%s hitWorld=%s hitSky=%s startSolid=%s allSolid=%s fraction=%s staticStudio=%s"):format(
+        label,
+        debugBool(tr.Hit),
+        debugBool(tr.HitWorld),
+        debugBool(tr.HitSky),
+        debugBool(tr.StartSolid),
+        debugBool(tr.AllSolid),
+        debugNumber(tr.Fraction),
+        debugBool(tr.HitWorld == true and tostring(tr.HitTexture or "") == "**studio**")
+    ))
+    print(("[Magic Align eyetrace debug] %s: %s"):format(label, debugEntity(tr.Entity)))
+    print(("[Magic Align eyetrace debug] %s: hitTexture=%s hitBox=%s hitGroup=%s physicsBone=%s surfaceProps=%s matType=%s contents=%s"):format(
+        label,
+        tostring(tr.HitTexture),
+        tostring(tr.HitBox),
+        tostring(tr.HitGroup),
+        tostring(tr.PhysicsBone),
+        tostring(tr.SurfaceProps),
+        tostring(tr.MatType),
+        tostring(tr.Contents)
+    ))
+    print(("[Magic Align eyetrace debug] %s: start=%s normal=%s hitPos=%s hitNormal=%s"):format(
+        label,
+        debugVec(tr.StartPos),
+        debugVec(tr.Normal),
+        debugVec(tr.HitPos),
+        debugVec(tr.HitNormal)
+    ))
+
+    if IsValid(tr.Entity) then
+        print(("[Magic Align eyetrace debug] %s: %s"):format(label, debugPhysics(tr.Entity)))
+    end
+end
+
+local function debugBounds(label, state, ent)
+    if not IsValid(ent) then
+        print(("[Magic Align eyetrace debug] %s bounds: ent invalid"):format(label))
+        return
+    end
+
+    local mins, maxs = M.GetLocalBounds(ent)
+    local size = isvector(mins) and isvector(maxs) and (maxs - mins) or nil
+    print(("[Magic Align eyetrace debug] %s bounds now: mins=%s maxs=%s size=%s"):format(
+        label,
+        debugVec(mins),
+        debugVec(maxs),
+        debugVec(size)
+    ))
+
+    local entry = istable(state) and istable(state.bounds) and state.bounds[ent] or nil
+    if not istable(entry) then
+        print(("[Magic Align eyetrace debug] %s bounds cache: nil"):format(label))
+        return
+    end
+
+    print(("[Magic Align eyetrace debug] %s bounds cache: ready=%s pending=%s requestedAt=%s revision=%s requestRevision=%s mins=%s maxs=%s size=%s"):format(
+        label,
+        debugBool(entry.ready),
+        debugBool(entry.pending),
+        debugNumber(entry.requestedAt),
+        tostring(entry.revision),
+        tostring(entry.requestRevision),
+        debugVec(entry.mins),
+        debugVec(entry.maxs),
+        debugVec(entry.size)
+    ))
+end
+
+local function debugCandidate(label, candidate)
+    if not istable(candidate) then
+        print(("[Magic Align eyetrace debug] %s candidate: nil"):format(label))
+        return
+    end
+
+    local face = candidate.face
+    local faceSummary = istable(face)
+        and ("axis=%s sign=%s u=[%s,%s] v=[%s,%s] snap=(%s,%s) modeFace=true"):format(
+            tostring(face.axis),
+            tostring(face.sign),
+            debugNumber(face.uMin),
+            debugNumber(face.uMax),
+            debugNumber(face.vMin),
+            debugNumber(face.vMax),
+            debugNumber(face.uSnap),
+            debugNumber(face.vSnap)
+        )
+        or "nil"
+
+    print(("[Magic Align eyetrace debug] %s candidate: mode=%s %s"):format(
+        label,
+        tostring(candidate.mode),
+        debugEntity(candidate.ent)
+    ))
+    print(("[Magic Align eyetrace debug] %s candidate: localPos=%s worldPos=%s localNormal=%s normal=%s face=%s"):format(
+        label,
+        debugVec(candidate.localPos),
+        debugVec(candidate.worldPos),
+        debugVec(candidate.localNormal),
+        debugVec(candidate.normal),
+        faceSummary
+    ))
+end
+
+local function debugHoverState(state)
+    local hover = istable(state) and state.hover or nil
+    if not istable(hover) then
+        print("[Magic Align eyetrace debug] hover: nil")
+        return
+    end
+
+    print(("[Magic Align eyetrace debug] hover: side=%s ent=%s pickSource=%s pickTarget=%s point=%s overlay=%s blockers=%s"):format(
+        tostring(hover.side),
+        debugEntity(hover.ent),
+        debugEntity(hover.pickSource),
+        debugEntity(hover.pickTarget),
+        debugBool(hover.point ~= nil),
+        debugBool(hover.overlay ~= nil),
+        tostring(istable(hover.worldBspBlockers) and #hover.worldBspBlockers or 0)
+    ))
+
+    debugTrace("hover.rawTrace", hover.rawTrace)
+    debugTrace("hover.trace", hover.trace)
+    debugCandidate("hover", hover.candidate)
+    debugCandidate("hover.overlay", hover.overlay)
+end
+
+local function debugEyeTrace()
+    local ply = LocalPlayer()
+    if not IsValid(ply) then
+        print("[Magic Align eyetrace debug] no LocalPlayer")
+        return
+    end
+
+    local state = M.ClientState
+    print(("[Magic Align eyetrace debug] session=%s activeSpace=%s state=%s prop1={%s} prop2={%s}"):format(
+        tostring(istable(state) and state.sessionId or nil),
+        tostring(client.activeSpace and client.activeSpace() or nil),
+        tostring(istable(state) and state.state or nil),
+        debugEntity(istable(state) and state.prop1 or nil),
+        debugEntity(istable(state) and state.prop2 or nil)
+    ))
+
+    local rawTrace = ply:GetEyeTrace()
+    debugTrace("current.rawEyeTrace", rawTrace)
+
+    local tool = select(1, activeTool())
+    local settings = tool and cfg(tool, {}) or nil
+    if settings then
+        local filteredTrace, blockers = rawTrace, nil
+        if settings.worldTarget
+            and settings.worldBspSnap
+            and isfunction(client.worldBspTraceThroughBlockers) then
+            filteredTrace, blockers = client.worldBspTraceThroughBlockers(rawTrace, settings, {})
+        end
+
+        print(("[Magic Align eyetrace debug] settings: worldTarget=%s worldBspSnap=%s ignoreBrushBlockers=%s blockers=%s"):format(
+            debugBool(settings.worldTarget),
+            debugBool(settings.worldBspSnap),
+            debugBool(settings.worldBspIgnoreBrushBlockers),
+            tostring(istable(blockers) and #blockers or 0)
+        ))
+        debugTrace("current.filteredTrace", filteredTrace)
+    else
+        print("[Magic Align eyetrace debug] settings: no active Magic Align tool")
+    end
+
+    local ent = rawTrace and rawTrace.Entity or nil
+    if IsValid(ent) then
+        debugBounds("current.rawEntity", state, ent)
+    end
+    if istable(state) then
+        if IsValid(state.prop1) then debugBounds("state.prop1", state, state.prop1) end
+        if IsValid(state.prop2) then debugBounds("state.prop2", state, state.prop2) end
+    end
+
+    debugHoverState(state)
+end
+
+if CLIENT and concommand then
+    concommand.Remove("magic_align_debug_eyetrace")
+    concommand.Add("magic_align_debug_eyetrace", debugEyeTrace)
+end
+
 core.copyMirrorReference = copyMirrorReference
 core.solvePreview = solvePreview
 core.ensureGhost = ensureGhost

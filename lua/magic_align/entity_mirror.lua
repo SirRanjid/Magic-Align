@@ -134,6 +134,17 @@ function EntityMirror.StateAxis(state)
     return validAxis(state.axis)
 end
 
+local function rawStoredState(ent)
+    if not IsValid(ent) then return end
+
+    local mods = istable(ent.EntityMods) and ent.EntityMods or nil
+    return mods and mods[M.ENTITY_MIRROR_MODIFIER_ID] or nil
+end
+
+local function storedState(ent)
+    return EntityMirror.Sanitize(rawStoredState(ent))
+end
+
 local function axisSigns(axis)
     if axis == M.ENTITY_MIRROR_X then return -1, 1, 1 end
     if axis == M.ENTITY_MIRROR_Y then return 1, -1, 1 end
@@ -963,8 +974,7 @@ function EntityMirror.GetAxis(ent)
     if not IsValid(ent) then return M.ENTITY_MIRROR_NONE end
 
     if SERVER then
-        local mods = istable(ent.EntityMods) and ent.EntityMods or nil
-        local stored = mods and EntityMirror.Sanitize(mods[M.ENTITY_MIRROR_MODIFIER_ID]) or nil
+        local stored = storedState(ent)
         if stored then return stored.axis end
     end
 
@@ -979,8 +989,7 @@ function EntityMirror.GetFlags(ent)
     if not IsValid(ent) then return M.ENTITY_MIRROR_DEFAULT_FLAGS end
 
     if SERVER then
-        local mods = istable(ent.EntityMods) and ent.EntityMods or nil
-        local stored = mods and EntityMirror.Sanitize(mods[M.ENTITY_MIRROR_MODIFIER_ID]) or nil
+        local stored = storedState(ent)
         if stored then return stored.flags end
     end
 
@@ -1006,6 +1015,14 @@ if SERVER then
         if IsValid(ent) then
             ent._magicAlignEntityMirrorPhysicsAxis = validAxis(axis)
         end
+    end
+
+    local function offStateAlreadyApplied(ent, current, currentFlags, actual, flags)
+        if rawStoredState(ent) ~= nil then return false end
+
+        return current == M.ENTITY_MIRROR_NONE
+            and actual == M.ENTITY_MIRROR_NONE
+            and currentFlags == flags
     end
 
     local function physicsState(ent)
@@ -1305,6 +1322,10 @@ if SERVER then
         end
 
         if axis == M.ENTITY_MIRROR_NONE then
+            if offStateAlreadyApplied(ent, current, currentFlags, actual, flags) then
+                return true
+            end
+
             local restoreAfterNetwork = M.IsPrimitive(ent)
             if not restoreAfterNetwork
                 and (forced or actual ~= M.ENTITY_MIRROR_NONE or current ~= M.ENTITY_MIRROR_NONE or changed) then
